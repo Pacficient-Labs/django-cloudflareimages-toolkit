@@ -19,6 +19,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
+from .exceptions import CloudflareImagesError
 from .models import CloudflareImage, ImageUploadStatus
 from .serializers import (
     BulkImageStatusSerializer,
@@ -32,7 +33,6 @@ from .serializers import (
 )
 from .services import cloudflare_service
 from .settings import cloudflare_settings
-from .exceptions import CloudflareImagesError
 
 logger = logging.getLogger(__name__)
 

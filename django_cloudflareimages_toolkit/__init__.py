@@ -17,18 +17,18 @@ from .transformations import (
 
 # Try to import Django-dependent components
 try:
+    from .exceptions import (
+        CloudflareImagesAPIError,
+        CloudflareImagesError,
+        ConfigurationError,
+        ImageNotFoundError,
+        UploadError,
+        ValidationError,
+    )
+    from .fields import CloudflareImageField
     from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
     from .services import cloudflare_service
-    from .fields import CloudflareImageField
     from .widgets import CloudflareImageWidget
-    from .exceptions import (
-        CloudflareImagesError,
-        CloudflareImagesAPIError,
-        ConfigurationError,
-        ValidationError,
-        UploadError,
-        ImageNotFoundError,
-    )
 
     _django_available = True
 except (ImportError, Exception):

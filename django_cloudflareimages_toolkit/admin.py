@@ -12,9 +12,9 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
+from .exceptions import CloudflareImagesError
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
 from .services import cloudflare_service
-from .exceptions import CloudflareImagesError
 
 
 class ImageUploadLogInline(admin.TabularInline):

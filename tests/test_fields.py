@@ -2,11 +2,14 @@
 Tests for CloudflareImageField and related functionality.
 """
 
-from django.test import TestCase
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.test import TestCase
 
-from django_cloudflareimages_toolkit.fields import CloudflareImageField, CloudflareImageFieldValue
+from django_cloudflareimages_toolkit.fields import (
+    CloudflareImageField,
+    CloudflareImageFieldValue,
+)
 from django_cloudflareimages_toolkit.models import CloudflareImage
 
 
@@ -209,8 +212,9 @@ class CloudflareImageFieldIntegrationTest(TestCase):
 
     def test_field_value_with_cloudflare_image(self):
         """Test CloudflareImageFieldValue with existing CloudflareImage."""
-        from django.utils import timezone
         from datetime import timedelta
+
+        from django.utils import timezone
 
         # Create a CloudflareImage instance
         cloudflare_image = CloudflareImage.objects.create(

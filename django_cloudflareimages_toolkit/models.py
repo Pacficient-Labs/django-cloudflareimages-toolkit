@@ -121,16 +121,16 @@ class CloudflareImage(models.Model):
     def get_url(self, variant: str = "public") -> str | None:
         """
         Get the URL for a specific variant of the image.
-        
+
         Args:
             variant: The variant name (e.g., 'public', 'thumbnail', 'avatar')
-            
+
         Returns:
             The URL for the specified variant, or None if not found
         """
         if not self.is_uploaded or not self.variants:
             return None
-            
+
         if isinstance(self.variants, list):
             # Handle list format variants
             for variant_url in self.variants:
@@ -139,27 +139,27 @@ class CloudflareImage(models.Model):
         elif isinstance(self.variants, dict):
             # Handle dict format variants
             return self.variants.get(variant)
-            
+
         return None
 
     def get_signed_url(self, variant: str = "public", expiry: int = 3600) -> str | None:
         """
         Get a signed URL for a specific variant of the image.
-        
+
         Args:
             variant: The variant name (e.g., 'public', 'thumbnail', 'avatar')
             expiry: Expiry time in seconds (default: 3600 = 1 hour)
-            
+
         Returns:
             A signed URL for the specified variant, or None if not available
-            
+
         Note:
             This method requires the image to have require_signed_urls=True
             and proper Cloudflare API integration for signing URLs.
         """
         if not self.is_uploaded or not self.require_signed_urls:
             return self.get_url(variant)
-            
+
         # For now, return the regular URL as signed URL generation
         # requires additional Cloudflare API integration
         # TODO: Implement actual signed URL generation via Cloudflare API
@@ -183,10 +183,10 @@ class CloudflareImage(models.Model):
         # Update image dimensions and format if available
         if "width" in response_data:
             self.width = response_data["width"]
-            
+
         if "height" in response_data:
             self.height = response_data["height"]
-            
+
         if "format" in response_data:
             self.format = response_data["format"]
 

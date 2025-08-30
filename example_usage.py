@@ -7,6 +7,7 @@ in a Django model and how it integrates with the existing CloudflareImage model.
 
 from django import forms
 from django.db import models
+
 from django_cloudflareimages_toolkit.fields import CloudflareImageField
 
 
@@ -126,7 +127,7 @@ TEMPLATE_EXAMPLE = """
 <div class="profile">
     <h2>{{ profile.name }}</h2>
     <p>{{ profile.email }}</p>
-    
+
     {% if profile.avatar %}
         <img src="{{ profile.avatar.get_url }}" alt="Avatar" class="avatar">
         <!-- Or with a specific variant -->
@@ -140,16 +141,16 @@ TEMPLATE_EXAMPLE = """
     <h3>{{ product.name }}</h3>
     <p>{{ product.description }}</p>
     <p>${{ product.price }}</p>
-    
+
     {% if product.image %}
         <!-- Hero image -->
         <img src="{{ product.image.get_url:'hero' }}" alt="{{ product.name }}" class="hero-image">
-        
+
         <!-- Thumbnail gallery -->
         <div class="thumbnails">
             <img src="{{ product.image.get_url:'thumbnail' }}" alt="Thumbnail">
         </div>
-        
+
         <!-- Image info -->
         <div class="image-info">
             <p>File size: {{ product.image.file_size|filesizeformat }}</p>

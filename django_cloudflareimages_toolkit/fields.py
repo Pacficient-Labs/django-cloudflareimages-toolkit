@@ -5,8 +5,7 @@ This module provides custom Django model fields that integrate seamlessly
 with Cloudflare Images, handling upload URLs, validation, and image management.
 """
 
-import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional
 
 from django import forms
 from django.core.exceptions import ValidationError
@@ -31,11 +30,11 @@ class CloudflareImageField(models.Field):
 
     def __init__(
         self,
-        variants: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        variants: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         require_signed_urls: bool = False,
-        max_file_size: Optional[int] = None,
-        allowed_formats: Optional[List[str]] = None,
+        max_file_size: int | None = None,
+        allowed_formats: list[str] | None = None,
         **kwargs
     ):
         """
@@ -96,7 +95,7 @@ class CloudflareImageField(models.Field):
         """Convert database value to Python object."""
         return self.to_python(value)
 
-    def get_prep_value(self, value: Any) -> Optional[str]:
+    def get_prep_value(self, value: Any) -> str | None:
         """
         Convert Python object to database value.
 
@@ -167,7 +166,7 @@ class CloudflareImageFieldValue:
     while storing only the Cloudflare image ID in the database.
     """
 
-    def __init__(self, cloudflare_id: str, field: Optional[CloudflareImageField] = None):
+    def __init__(self, cloudflare_id: str, field: CloudflareImageField | None = None):
         """
         Initialize the field value.
 
@@ -196,7 +195,7 @@ class CloudflareImageFieldValue:
         return False
 
     @property
-    def cloudflare_image(self) -> Optional[CloudflareImage]:
+    def cloudflare_image(self) -> CloudflareImage | None:
         """
         Get the associated CloudflareImage model instance.
 
@@ -212,7 +211,7 @@ class CloudflareImageFieldValue:
                 pass
         return self._cloudflare_image
 
-    def get_url(self, variant: str = 'public') -> Optional[str]:
+    def get_url(self, variant: str = 'public') -> str | None:
         """
         Get the image URL for a specific variant.
 
@@ -241,7 +240,7 @@ class CloudflareImageFieldValue:
 
         return None
 
-    def get_signed_url(self, variant: str = 'public', expiry: int = 3600) -> Optional[str]:
+    def get_signed_url(self, variant: str = 'public', expiry: int = 3600) -> str | None:
         """
         Get a signed URL for the image.
 
@@ -276,7 +275,7 @@ class CloudflareImageFieldValue:
         except Exception:
             return False
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         """
         Get image metadata.
 
@@ -287,7 +286,7 @@ class CloudflareImageFieldValue:
             return self.cloudflare_image.metadata
         return {}
 
-    def update_metadata(self, metadata: Dict[str, Any]) -> bool:
+    def update_metadata(self, metadata: dict[str, Any]) -> bool:
         """
         Update image metadata.
 
@@ -311,7 +310,7 @@ class CloudflareImageFieldValue:
             return False
 
     @property
-    def variants(self) -> List[str]:
+    def variants(self) -> list[str]:
         """
         Get available image variants.
 
@@ -323,14 +322,14 @@ class CloudflareImageFieldValue:
         return []
 
     @property
-    def file_size(self) -> Optional[int]:
+    def file_size(self) -> int | None:
         """Get image file size in bytes."""
         if self.cloudflare_image:
             return self.cloudflare_image.file_size
         return None
 
     @property
-    def filename(self) -> Optional[str]:
+    def filename(self) -> str | None:
         """Get original filename."""
         if self.cloudflare_image:
             return self.cloudflare_image.filename

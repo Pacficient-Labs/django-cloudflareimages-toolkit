@@ -13,11 +13,7 @@ import requests
 from django.utils import timezone
 
 from .exceptions import (
-    CloudflareImagesAPIError,
     CloudflareImagesError,
-    ConfigurationError,
-    ImageNotFoundError,
-    UploadError,
 )
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
 from .settings import cloudflare_settings
