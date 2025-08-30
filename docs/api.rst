@@ -234,6 +234,16 @@ Django model field for Cloudflare Images integration.
            allowed_formats=['jpeg', 'png']
        )
 
+CloudflareImageWidget
+---------------------
+
+.. autoclass:: django_cloudflareimages_toolkit.widgets.CloudflareImageWidget
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Django form widget for handling Cloudflare image uploads with JavaScript-based upload functionality.
+
 Django Admin Integration
 ------------------------
 

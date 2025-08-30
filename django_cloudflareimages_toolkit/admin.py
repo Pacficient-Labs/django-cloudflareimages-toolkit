@@ -13,7 +13,8 @@ from django.utils import timezone
 from django.utils.html import format_html
 
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
-from .services import CloudflareImagesError, cloudflare_service
+from .services import cloudflare_service
+from .exceptions import CloudflareImagesError
 
 
 class ImageUploadLogInline(admin.TabularInline):
@@ -81,10 +82,14 @@ class CloudflareImageAdmin(admin.ModelAdmin):
         "updated_at",
         "uploaded_at",
         "expires_at",
+        "width",
+        "height",
+        "format",
         "variants_display",
         "cloudflare_metadata_display",
         "is_expired_display",
         "is_uploaded_display",
+        "is_ready_display",
         "public_url_display",
         "thumbnail_url_display",
         "image_preview",
@@ -99,6 +104,9 @@ class CloudflareImageAdmin(admin.ModelAdmin):
         "original_filename",
         "content_type",
         "file_size",
+        "width",
+        "height",
+        "format",
         "upload_url_display",
         "status",
         "require_signed_urls",
@@ -111,6 +119,7 @@ class CloudflareImageAdmin(admin.ModelAdmin):
         "cloudflare_metadata_display",
         "is_expired_display",
         "is_uploaded_display",
+        "is_ready_display",
         "public_url_display",
         "thumbnail_url_display",
         "image_preview",
@@ -307,6 +316,12 @@ class CloudflareImageAdmin(admin.ModelAdmin):
 
     is_uploaded_display.short_description = "Is Uploaded"
 
+    def is_ready_display(self, obj):
+        """Display ready status."""
+        return "✅ Ready" if obj.is_ready else "❌ Not Ready"
+
+    is_ready_display.short_description = "Is Ready"
+
     def public_url_display(self, obj):
         """Display public URL with link."""
         if obj.public_url:
@@ -448,7 +463,8 @@ class CloudflareImageAdmin(admin.ModelAdmin):
             except CloudflareImagesError:
                 pass
 
-        self.message_user(request, f"Refreshed status for {updated_count} images.")
+        self.message_user(
+            request, f"Refreshed status for {updated_count} images.")
 
     refresh_all_status.short_description = "Refresh all pending/draft status"
 
@@ -482,7 +498,8 @@ class ImageUploadLogAdmin(admin.ModelAdmin):
         "image__user__username",
     )
 
-    readonly_fields = ("image", "event_type", "message", "formatted_data", "timestamp")
+    readonly_fields = ("image", "event_type", "message",
+                       "formatted_data", "timestamp")
 
     fields = ("image", "event_type", "message", "formatted_data", "timestamp")
 

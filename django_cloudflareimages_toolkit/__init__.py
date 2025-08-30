@@ -18,7 +18,17 @@ from .transformations import (
 # Try to import Django-dependent components
 try:
     from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
-    from .services import CloudflareImagesError, cloudflare_service
+    from .services import cloudflare_service
+    from .fields import CloudflareImageField
+    from .widgets import CloudflareImageWidget
+    from .exceptions import (
+        CloudflareImagesError,
+        CloudflareImagesAPIError,
+        ConfigurationError,
+        ValidationError,
+        UploadError,
+        ImageNotFoundError,
+    )
 
     _django_available = True
 except (ImportError, Exception):
@@ -28,7 +38,14 @@ except (ImportError, Exception):
     ImageUploadLog = None
     ImageUploadStatus = None
     cloudflare_service = None
+    CloudflareImageField = None
+    CloudflareImageWidget = None
     CloudflareImagesError = None
+    CloudflareImagesAPIError = None
+    ConfigurationError = None
+    ValidationError = None
+    UploadError = None
+    ImageNotFoundError = None
 
 # Define what gets imported with "from django_cloudflareimages_toolkit import *"
 __all__ = [
@@ -45,6 +62,13 @@ if _django_available:
             "ImageUploadLog",
             "ImageUploadStatus",
             "cloudflare_service",
+            "CloudflareImageField",
+            "CloudflareImageWidget",
             "CloudflareImagesError",
+            "CloudflareImagesAPIError",
+            "ConfigurationError",
+            "ValidationError",
+            "UploadError",
+            "ImageNotFoundError",
         ]
     )

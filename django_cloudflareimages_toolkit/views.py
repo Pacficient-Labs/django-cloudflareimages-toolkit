@@ -30,8 +30,9 @@ from .serializers import (
     ImageUploadResponseSerializer,
     WebhookPayloadSerializer,
 )
-from .services import CloudflareImagesError, cloudflare_service
+from .services import cloudflare_service
 from .settings import cloudflare_settings
+from .exceptions import CloudflareImagesError
 
 logger = logging.getLogger(__name__)
 

@@ -12,16 +12,17 @@ from typing import Any
 import requests
 from django.utils import timezone
 
+from .exceptions import (
+    CloudflareImagesAPIError,
+    CloudflareImagesError,
+    ConfigurationError,
+    ImageNotFoundError,
+    UploadError,
+)
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
 from .settings import cloudflare_settings
 
 logger = logging.getLogger(__name__)
-
-
-class CloudflareImagesError(Exception):
-    """Base exception for Cloudflare Images operations."""
-
-    pass
 
 
 class CloudflareImagesService:
@@ -38,6 +39,32 @@ class CloudflareImagesService:
                 "Content-Type": "application/json",
             }
         )
+
+    def get_direct_upload_url(
+        self,
+        user=None,
+        custom_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        require_signed_urls: bool | None = None,
+        expiry_minutes: int | None = None,
+    ) -> dict[str, str]:
+        """
+        Get a one-time upload URL for direct creator upload.
+
+        This is an alias for create_direct_upload_url that returns a dict
+        to match the documentation examples.
+        """
+        image = self.create_direct_upload_url(
+            user=user,
+            custom_id=custom_id,
+            metadata=metadata,
+            require_signed_urls=require_signed_urls,
+            expiry_minutes=expiry_minutes
+        )
+        return {
+            'id': image.cloudflare_id,
+            'uploadURL': image.upload_url
+        }
 
     def create_direct_upload_url(
         self,
@@ -102,7 +129,8 @@ class CloudflareImagesService:
                         for err in data.get("errors", [])
                     ]
                 )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
+                raise CloudflareImagesError(
+                    f"Cloudflare API error: {error_msg}")
 
             result = data["result"]
 
@@ -125,12 +153,14 @@ class CloudflareImagesService:
                 data={"response": result},
             )
 
-            logger.info(f"Created direct upload URL for image {image.cloudflare_id}")
+            logger.info(
+                f"Created direct upload URL for image {image.cloudflare_id}")
             return image
 
         except requests.RequestException as e:
             logger.error(f"Failed to create direct upload URL: {str(e)}")
-            raise CloudflareImagesError(f"Failed to create upload URL: {str(e)}") from e
+            raise CloudflareImagesError(
+                f"Failed to create upload URL: {str(e)}") from e
 
         finally:
             # Restore Content-Type header
@@ -164,7 +194,8 @@ class CloudflareImagesService:
                         for err in data.get("errors", [])
                     ]
                 )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
+                raise CloudflareImagesError(
+                    f"Cloudflare API error: {error_msg}")
 
             result = data["result"]
 
@@ -191,6 +222,152 @@ class CloudflareImagesService:
             raise CloudflareImagesError(
                 f"Failed to check image status: {str(e)}"
             ) from e
+
+    def list_images(self, page: int = 1, per_page: int = 50) -> dict[str, Any]:
+        """
+        List images from Cloudflare Images.
+
+        Args:
+            page: Page number for pagination (default: 1)
+            per_page: Number of images per page (default: 50, max: 100)
+
+        Returns:
+            Dictionary with pagination info and list of images
+
+        Raises:
+            CloudflareImagesError: If the API request fails
+        """
+        url = f"{self.base_url}/accounts/{self.account_id}/images/v1"
+        params = {
+            "page": page,
+            "per_page": min(per_page, 100)  # Cloudflare max is 100
+        }
+
+        try:
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            data = response.json()
+
+            if not data.get("success"):
+                error_msg = ", ".join(
+                    [
+                        err.get("message", "Unknown error")
+                        for err in data.get("errors", [])
+                    ]
+                )
+                raise CloudflareImagesError(
+                    f"Cloudflare API error: {error_msg}")
+
+            logger.info(f"Listed images: page {page}, per_page {per_page}")
+            return data
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to list images: {str(e)}")
+            raise CloudflareImagesError(
+                f"Failed to list images: {str(e)}") from e
+
+    def get_image(self, image_id: str) -> dict[str, Any]:
+        """
+        Get details for a specific image.
+
+        Args:
+            image_id: Cloudflare image ID
+
+        Returns:
+            Dictionary with image details
+
+        Raises:
+            CloudflareImagesError: If the API request fails
+        """
+        url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image_id}"
+
+        try:
+            response = self.session.get(url)
+            response.raise_for_status()
+
+            data = response.json()
+
+            if not data.get("success"):
+                error_msg = ", ".join(
+                    [
+                        err.get("message", "Unknown error")
+                        for err in data.get("errors", [])
+                    ]
+                )
+                raise CloudflareImagesError(
+                    f"Cloudflare API error: {error_msg}")
+
+            logger.info(f"Retrieved image details for {image_id}")
+            return data
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to get image {image_id}: {str(e)}")
+            raise CloudflareImagesError(
+                f"Failed to get image: {str(e)}") from e
+
+    def update_image(
+        self,
+        image_id: str,
+        metadata: dict[str, Any] | None = None,
+        require_signed_urls: bool | None = None
+    ) -> dict[str, Any]:
+        """
+        Update image metadata and settings.
+
+        Args:
+            image_id: Cloudflare image ID
+            metadata: New metadata for the image
+            require_signed_urls: Whether to require signed URLs
+
+        Returns:
+            Dictionary with updated image details
+
+        Raises:
+            CloudflareImagesError: If the API request fails
+        """
+        url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image_id}"
+
+        update_data = {}
+        if metadata is not None:
+            update_data["metadata"] = metadata
+        if require_signed_urls is not None:
+            update_data["requireSignedURLs"] = require_signed_urls
+
+        try:
+            response = self.session.patch(url, json=update_data)
+            response.raise_for_status()
+
+            data = response.json()
+
+            if not data.get("success"):
+                error_msg = ", ".join(
+                    [
+                        err.get("message", "Unknown error")
+                        for err in data.get("errors", [])
+                    ]
+                )
+                raise CloudflareImagesError(
+                    f"Cloudflare API error: {error_msg}")
+
+            # Update local CloudflareImage if it exists
+            try:
+                image = CloudflareImage.objects.get(cloudflare_id=image_id)
+                if metadata is not None:
+                    image.metadata.update(metadata)
+                if require_signed_urls is not None:
+                    image.require_signed_urls = require_signed_urls
+                image.save()
+            except CloudflareImage.DoesNotExist:
+                pass
+
+            logger.info(f"Updated image {image_id}")
+            return data
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to update image {image_id}: {str(e)}")
+            raise CloudflareImagesError(
+                f"Failed to update image: {str(e)}") from e
 
     def delete_image(self, image: CloudflareImage) -> bool:
         """
@@ -220,7 +397,8 @@ class CloudflareImagesService:
                         for err in data.get("errors", [])
                     ]
                 )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
+                raise CloudflareImagesError(
+                    f"Cloudflare API error: {error_msg}")
 
             # Log the deletion
             ImageUploadLog.objects.create(
@@ -234,8 +412,10 @@ class CloudflareImagesService:
             return True
 
         except requests.RequestException as e:
-            logger.error(f"Failed to delete image {image.cloudflare_id}: {str(e)}")
-            raise CloudflareImagesError(f"Failed to delete image: {str(e)}") from e
+            logger.error(
+                f"Failed to delete image {image.cloudflare_id}: {str(e)}")
+            raise CloudflareImagesError(
+                f"Failed to delete image: {str(e)}") from e
 
     def validate_webhook_signature(self, payload: bytes, signature: str) -> bool:
         """
@@ -286,7 +466,8 @@ class CloudflareImagesService:
             try:
                 image = CloudflareImage.objects.get(cloudflare_id=image_id)
             except CloudflareImage.DoesNotExist:
-                logger.warning(f"Received webhook for unknown image: {image_id}")
+                logger.warning(
+                    f"Received webhook for unknown image: {image_id}")
                 return None
 
             # Update image from webhook data
