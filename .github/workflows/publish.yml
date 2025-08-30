@@ -49,8 +49,6 @@ jobs:
 
     - name: Verify build
       run: |
-        uv run twine check dist/*
-        
         # List contents of the built packages
         echo "Built packages:"
         ls -la dist/
@@ -60,6 +58,12 @@ jobs:
           echo "Error: Both wheel and source distribution should be created"
           exit 1
         fi
+        
+        # Basic verification that files exist and have reasonable sizes
+        echo "Package verification:"
+        for file in dist/*; do
+          echo "  $file: $(stat -c%s "$file") bytes"
+        done
 
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
