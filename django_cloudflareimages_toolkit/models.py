@@ -30,8 +30,7 @@ class CloudflareImage(models.Model):
 
     # Primary identifiers
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    cloudflare_id = models.CharField(
-        max_length=255, unique=True, db_index=True)
+    cloudflare_id = models.CharField(max_length=255, unique=True, db_index=True)
 
     # User and metadata
     user = models.ForeignKey(

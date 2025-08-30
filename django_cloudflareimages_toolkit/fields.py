@@ -35,7 +35,7 @@ class CloudflareImageField(models.Field):
         require_signed_urls: bool = False,
         max_file_size: int | None = None,
         allowed_formats: list[str] | None = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize the CloudflareImageField.
@@ -52,21 +52,20 @@ class CloudflareImageField(models.Field):
         self.metadata = metadata or {}
         self.require_signed_urls = require_signed_urls
         self.max_file_size = max_file_size
-        self.allowed_formats = allowed_formats or [
-            'jpeg', 'png', 'gif', 'webp']
+        self.allowed_formats = allowed_formats or ["jpeg", "png", "gif", "webp"]
 
         # Set default field options
-        kwargs.setdefault('max_length', 255)
-        kwargs.setdefault('blank', True)
-        kwargs.setdefault('null', True)
+        kwargs.setdefault("max_length", 255)
+        kwargs.setdefault("blank", True)
+        kwargs.setdefault("null", True)
 
         super().__init__(**kwargs)
 
     def get_internal_type(self) -> str:
         """Return the internal field type for Django."""
-        return 'CharField'
+        return "CharField"
 
-    def to_python(self, value: Any) -> Optional['CloudflareImageFieldValue']:
+    def to_python(self, value: Any) -> Optional["CloudflareImageFieldValue"]:
         """
         Convert the database value to a Python object.
 
@@ -76,7 +75,7 @@ class CloudflareImageField(models.Field):
         Returns:
             CloudflareImageFieldValue instance or None
         """
-        if value is None or value == '':
+        if value is None or value == "":
             return None
 
         if isinstance(value, CloudflareImageFieldValue):
@@ -87,11 +86,13 @@ class CloudflareImageField(models.Field):
             return CloudflareImageFieldValue(value, field=self)
 
         raise ValidationError(
-            _('Invalid value for CloudflareImageField: %(value)s'),
-            params={'value': value}
+            _("Invalid value for CloudflareImageField: %(value)s"),
+            params={"value": value},
         )
 
-    def from_db_value(self, value: Any, expression, connection) -> Optional['CloudflareImageFieldValue']:
+    def from_db_value(
+        self, value: Any, expression, connection
+    ) -> Optional["CloudflareImageFieldValue"]:
         """Convert database value to Python object."""
         return self.to_python(value)
 
@@ -119,14 +120,14 @@ class CloudflareImageField(models.Field):
     def formfield(self, **kwargs) -> forms.Field:
         """Return the form field for this model field."""
         defaults = {
-            'widget': CloudflareImageWidget(
+            "widget": CloudflareImageWidget(
                 variants=self.variants,
                 metadata=self.metadata,
                 require_signed_urls=self.require_signed_urls,
                 max_file_size=self.max_file_size,
                 allowed_formats=self.allowed_formats,
             ),
-            'required': not self.blank,
+            "required": not self.blank,
         }
         defaults.update(kwargs)
         return forms.CharField(**defaults)
@@ -145,15 +146,15 @@ class CloudflareImageField(models.Field):
 
         # Add custom field options to kwargs
         if self.variants:
-            kwargs['variants'] = self.variants
+            kwargs["variants"] = self.variants
         if self.metadata:
-            kwargs['metadata'] = self.metadata
+            kwargs["metadata"] = self.metadata
         if self.require_signed_urls:
-            kwargs['require_signed_urls'] = self.require_signed_urls
+            kwargs["require_signed_urls"] = self.require_signed_urls
         if self.max_file_size:
-            kwargs['max_file_size'] = self.max_file_size
-        if self.allowed_formats != ['jpeg', 'png', 'gif', 'webp']:
-            kwargs['allowed_formats'] = self.allowed_formats
+            kwargs["max_file_size"] = self.max_file_size
+        if self.allowed_formats != ["jpeg", "png", "gif", "webp"]:
+            kwargs["allowed_formats"] = self.allowed_formats
 
         return name, path, args, kwargs
 
@@ -211,7 +212,7 @@ class CloudflareImageFieldValue:
                 pass
         return self._cloudflare_image
 
-    def get_url(self, variant: str = 'public') -> str | None:
+    def get_url(self, variant: str = "public") -> str | None:
         """
         Get the image URL for a specific variant.
 
@@ -231,6 +232,7 @@ class CloudflareImageFieldValue:
         # Fallback to generating URL from service
         try:
             from .settings import cloudflare_settings
+
             account_id = cloudflare_settings.account_id
 
             if account_id:
@@ -240,7 +242,7 @@ class CloudflareImageFieldValue:
 
         return None
 
-    def get_signed_url(self, variant: str = 'public', expiry: int = 3600) -> str | None:
+    def get_signed_url(self, variant: str = "public", expiry: int = 3600) -> str | None:
         """
         Get a signed URL for the image.
 
@@ -346,5 +348,5 @@ class CloudflareImageFieldValue:
     def is_ready(self) -> bool:
         """Check if image processing is complete."""
         if self.cloudflare_image:
-            return self.cloudflare_image.status == 'uploaded'
+            return self.cloudflare_image.status == "uploaded"
         return False
