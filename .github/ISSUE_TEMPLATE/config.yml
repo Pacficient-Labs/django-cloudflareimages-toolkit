@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Documentation
+    url: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/blob/main/README.md
+    about: Read the comprehensive documentation and examples
+  - name: 💬 GitHub Discussions
+    url: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/discussions
+    about: Ask questions and discuss ideas with the community
+  - name: 🔧 Webhook Setup Guide
+    url: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/blob/main/WEBHOOK_SETUP.md
+    about: Detailed guide for setting up Cloudflare webhooks
+  - name: 🌐 Cloudflare Images Documentation
+    url: https://developers.cloudflare.com/images/
+    about: Official Cloudflare Images API documentation

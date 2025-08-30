@@ -1,0 +1,89 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
+      contents: read
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Set up Python
+      run: uv python install 3.11
+
+    - name: Install build dependencies
+      run: uv sync --extra dev
+
+    - name: Verify version matches tag
+      run: |
+        # Extract version from tag (remove 'v' prefix if present)
+        TAG_VERSION=${GITHUB_REF#refs/tags/}
+        TAG_VERSION=${TAG_VERSION#v}
+        
+        # Extract version from pyproject.toml
+        PACKAGE_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+        
+        echo "Tag version: $TAG_VERSION"
+        echo "Package version: $PACKAGE_VERSION"
+        
+        if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+          echo "Error: Tag version ($TAG_VERSION) does not match package version ($PACKAGE_VERSION)"
+          exit 1
+        fi
+
+    - name: Build package
+      run: uv build
+
+    - name: Verify build
+      run: |
+        uv run twine check dist/*
+        
+        # List contents of the built packages
+        echo "Built packages:"
+        ls -la dist/
+        
+        # Check that both wheel and source distribution were created
+        if [ ! -f dist/*.whl ] || [ ! -f dist/*.tar.gz ]; then
+          echo "Error: Both wheel and source distribution should be created"
+          exit 1
+        fi
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        # Using trusted publishing (recommended)
+        # No need for API tokens when using trusted publishing
+        verbose: true
+        print-hash: true
+
+  notify:
+    needs: publish
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Notify success
+      if: needs.publish.result == 'success'
+      run: |
+        echo "✅ Successfully published django-cloudflareimages-toolkit to PyPI!"
+        echo "📦 Package should be available at: https://pypi.org/project/django-cloudflareimages-toolkit/"
+    
+    - name: Notify failure
+      if: needs.publish.result == 'failure'
+      run: |
+        echo "❌ Failed to publish django-cloudflareimages-toolkit to PyPI"
+        echo "Check the logs above for details"
+        exit 1

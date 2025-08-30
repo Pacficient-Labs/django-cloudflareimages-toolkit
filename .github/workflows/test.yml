@@ -1,0 +1,264 @@
+name: Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        django-version: [4.2, 5.0, 5.1]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Set up Python ${{ matrix.python-version }}
+      run: uv python install ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra dev
+        uv add "Django~=${{ matrix.django-version }}.0"
+
+    - name: Run Django checks
+      run: |
+        # Test Django integration
+        uv run python -c "
+        import os
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.settings')
+        import django
+        django.setup()
+        from django.core.management import execute_from_command_line
+        execute_from_command_line(['manage.py', 'check'])
+        "
+
+    - name: Run migrations
+      run: |
+        # Test migrations work
+        uv run python -c "
+        import os
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.settings')
+        import django
+        django.setup()
+        from django.core.management import execute_from_command_line
+        execute_from_command_line(['manage.py', 'migrate', '--run-syncdb'])
+        "
+
+    - name: Test Django admin integration
+      run: |
+        # Test admin integration
+        uv run python -c "
+        import os
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.settings')
+        import django
+        django.setup()
+        from django.contrib import admin
+        from django_cloudflareimages_toolkit.models import CloudflareImage
+        assert CloudflareImage in admin.site._registry
+        print('✅ Django admin integration working')
+        "
+
+    - name: Test package imports
+      run: |
+        uv run python -c "
+        # Configure Django settings before importing models
+        import os
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.settings')
+        import django
+        django.setup()
+        
+        # Test all imports work
+        from django_cloudflareimages_toolkit import __version__
+        from django_cloudflareimages_toolkit.services import cloudflare_service
+        from django_cloudflareimages_toolkit.models import CloudflareImage
+        from django_cloudflareimages_toolkit.admin import CloudflareImageAdmin
+        from django_cloudflareimages_toolkit.transformations import CloudflareImageTransform
+        print(f'✅ All imports successful, version: {__version__}')
+        "
+
+    - name: Run tests
+      run: |
+        uv run pytest --cov=django_cloudflareimages_toolkit --cov-report=xml --verbose
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: false
+      continue-on-error: true
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Allow pushing changes
+      pull-requests: write  # Allow commenting on PRs
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Set up Python
+      run: uv python install 3.11
+
+    - name: Install dependencies
+      run: uv sync --extra dev
+
+    - name: Run Ruff linting
+      id: ruff-check
+      run: |
+        echo "Running Ruff linting..."
+        if uv run ruff check django_cloudflareimages_toolkit/; then
+          echo "✅ No Ruff linting issues found"
+          echo "ruff_passed=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Ruff linting issues found"
+          echo "ruff_passed=false" >> $GITHUB_OUTPUT
+          echo ""
+          echo "To fix linting issues, run:"
+          echo "  uv run ruff check --fix --unsafe-fixes django_cloudflareimages_toolkit/"
+        fi
+      continue-on-error: true
+
+    - name: Run Ruff formatting check
+      id: ruff-format-check
+      run: |
+        echo "Checking Ruff formatting..."
+        if uv run ruff format --check django_cloudflareimages_toolkit/; then
+          echo "✅ Code is properly formatted"
+          echo "formatted=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Code formatting issues found"
+          echo "formatted=false" >> $GITHUB_OUTPUT
+          echo ""
+          echo "To fix formatting issues, run:"
+          echo "  uv run ruff format django_cloudflareimages_toolkit/"
+        fi
+      continue-on-error: true
+
+    - name: Auto-fix issues (on push to main/develop)
+      if: (steps.ruff-check.outputs.ruff_passed == 'false' || steps.ruff-format-check.outputs.formatted == 'false') && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+      run: |
+        echo "Auto-fixing Ruff issues..."
+        uv run ruff check --fix --unsafe-fixes django_cloudflareimages_toolkit/
+        uv run ruff format django_cloudflareimages_toolkit/
+        if [[ -n $(git status --porcelain) ]]; then
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add django_cloudflareimages_toolkit/
+          git commit -m "style: auto-fix Ruff linting and formatting [skip ci]"
+          git push
+          echo "✅ Issues fixed and committed"
+        fi
+
+    - name: Fail on issues (PRs only)
+      if: (steps.ruff-check.outputs.ruff_passed == 'false' || steps.ruff-format-check.outputs.formatted == 'false') && github.event_name == 'pull_request'
+      run: |
+        echo "::error::Code quality issues found in PR. Please run 'uv run ruff check --fix --unsafe-fixes django_cloudflareimages_toolkit/' and 'uv run ruff format django_cloudflareimages_toolkit/' to fix."
+        exit 1
+
+    - name: Run Black (fallback formatting check)
+      run: |
+        echo "Running Black as fallback formatting check..."
+        if uv run black --check --diff django_cloudflareimages_toolkit/; then
+          echo "✅ Black formatting check passed"
+        else
+          echo "⚠️ Black formatting differs from Ruff (this is informational only)"
+        fi
+      continue-on-error: true
+
+    - name: Run flake8 (additional linting)
+      run: |
+        echo "Running flake8 for additional checks..."
+        if uv run flake8 django_cloudflareimages_toolkit/ --max-line-length=88 --ignore=C901,W503; then
+          echo "✅ No additional flake8 issues found"
+        else
+          echo "⚠️ Additional flake8 issues found (informational only)"
+        fi
+      continue-on-error: true
+
+    - name: Run mypy
+      id: mypy-check
+      run: |
+        echo "Running mypy type checking..."
+        if uv run mypy django_cloudflareimages_toolkit/; then
+          echo "✅ No mypy type issues found"
+          echo "mypy_passed=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ mypy type issues found"
+          echo "mypy_passed=false" >> $GITHUB_OUTPUT
+          echo ""
+          echo "To fix type issues, review the mypy output above and update type annotations."
+        fi
+      continue-on-error: true
+
+    - name: Summary of code quality checks
+      run: |
+        echo "## Code Quality Summary"
+        echo "======================"
+        
+        # Check Ruff linting
+        if [[ "${{ steps.ruff-check.outputs.ruff_passed }}" == "true" ]]; then
+          echo "✅ Ruff linting: PASSED"
+        else
+          echo "❌ Ruff linting: FAILED"
+        fi
+        
+        # Check Ruff formatting
+        if [[ "${{ steps.ruff-format-check.outputs.formatted }}" == "true" ]]; then
+          echo "✅ Ruff formatting: PASSED"
+        else
+          echo "❌ Ruff formatting: FAILED"
+        fi
+        
+        # Check mypy
+        if [[ "${{ steps.mypy-check.outputs.mypy_passed }}" == "true" ]]; then
+          echo "✅ MyPy type checking: PASSED"
+        else
+          echo "❌ MyPy type checking: FAILED"
+        fi
+        
+        echo ""
+        echo "## Next Steps"
+        echo "============="
+        
+        # Provide guidance based on results
+        if [[ "${{ steps.ruff-check.outputs.ruff_passed }}" == "false" || "${{ steps.ruff-format-check.outputs.formatted }}" == "false" ]]; then
+          echo "🔧 To fix linting and formatting issues:"
+          echo "   uv run ruff check --fix --unsafe-fixes django_cloudflareimages_toolkit/"
+          echo "   uv run ruff format django_cloudflareimages_toolkit/"
+          echo ""
+        fi
+        
+        if [[ "${{ steps.mypy-check.outputs.mypy_passed }}" == "false" ]]; then
+          echo "🔍 To fix type checking issues:"
+          echo "   Review the mypy output above and update type annotations"
+          echo "   Run 'uv run mypy django_cloudflareimages_toolkit/' locally to see detailed errors"
+          echo ""
+        fi
+        
+        # Only fail on PRs for critical issues (Ruff linting/formatting)
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          if [[ "${{ steps.ruff-check.outputs.ruff_passed }}" == "false" || "${{ steps.ruff-format-check.outputs.formatted }}" == "false" ]]; then
+            echo "::error::Critical code quality issues found in PR. Please fix linting and formatting issues before merging."
+            exit 1
+          elif [[ "${{ steps.mypy-check.outputs.mypy_passed }}" == "false" ]]; then
+            echo "::warning::Type checking issues found. Consider fixing these for better code quality."
+          fi
+        fi
+        
+        echo "✅ Code quality check completed"

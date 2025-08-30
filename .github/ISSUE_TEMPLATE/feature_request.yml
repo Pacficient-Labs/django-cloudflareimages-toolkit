@@ -1,0 +1,140 @@
+name: ✨ Feature Request
+description: Suggest a new feature or enhancement
+title: "[FEATURE] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide as much detail as possible to help us understand your request.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      description: Please check the following before submitting
+      options:
+        - label: I have searched existing issues to ensure this is not a duplicate
+          required: true
+        - label: I have read the documentation to confirm this feature doesn't already exist
+          required: true
+        - label: This feature would benefit the broader community, not just my specific use case
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve? What limitation are you facing?
+      placeholder: |
+        I'm trying to... but I can't because...
+        Currently, the toolkit doesn't support...
+        It would be helpful if...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: What feature would solve this problem? How should it work?
+      placeholder: |
+        I would like to see...
+        The feature should work by...
+        Users would be able to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use Case
+      description: Provide a specific example of how you would use this feature
+      placeholder: |
+        In my Django application, I need to...
+        For example, when a user uploads an image...
+        This would allow me to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: api_example
+    attributes:
+      label: API Design Example
+      description: If applicable, show how you envision the API would work
+      render: python
+      placeholder: |
+        # Example of how the feature might be used
+        from django_cloudflareimages_toolkit.services import cloudflare_service
+        
+        # Your proposed API usage
+        result = cloudflare_service.new_feature_method(
+            parameter1='value1',
+            parameter2='value2'
+        )
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - "Low - Nice to have"
+        - "Medium - Would be helpful"
+        - "High - Important for my project"
+        - "Critical - Blocking my use of the toolkit"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: complexity
+    attributes:
+      label: Estimated Complexity
+      description: How complex do you think this feature would be to implement?
+      options:
+        - "Low - Simple addition or modification"
+        - "Medium - Moderate changes required"
+        - "High - Significant new functionality"
+        - "Unknown - Not sure about implementation complexity"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What alternatives have you considered? What workarounds are you currently using?
+      placeholder: |
+        I've tried...
+        Currently I'm working around this by...
+        Other solutions I considered...
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Ideas
+      description: If you have technical suggestions for how this could be implemented, share them here
+      placeholder: |
+        This could be implemented by...
+        It might require changes to...
+        The Cloudflare API supports...
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Would you be interested in contributing to this feature?
+      options:
+        - label: I would be willing to help implement this feature
+        - label: I would be willing to test this feature once implemented
+        - label: I would be willing to help with documentation for this feature
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context, screenshots, or examples about the feature request
+      placeholder: |
+        Links to relevant documentation...
+        Screenshots or mockups...
+        Related features in other libraries...

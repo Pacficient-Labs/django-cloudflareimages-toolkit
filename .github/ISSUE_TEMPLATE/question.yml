@@ -1,0 +1,158 @@
+name: ❓ Question
+description: Ask a question about usage, configuration, or implementation
+title: "[QUESTION] "
+labels: ["question", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your question! Please provide as much detail as possible to help us give you the best answer.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      description: Please check the following before submitting
+      options:
+        - label: I have searched existing issues and discussions for similar questions
+          required: true
+        - label: I have read the documentation and README
+          required: true
+        - label: I have checked the troubleshooting guide and examples
+          required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know? Be as specific as possible.
+      placeholder: |
+        How do I...?
+        What's the best way to...?
+        Why does... happen when I...?
+        Is it possible to...?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What are you trying to achieve? What's your use case?
+      placeholder: |
+        I'm building a Django application that...
+        I need to implement image uploads for...
+        My goal is to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What I've Tried
+      description: What have you already attempted? Show your code and approach.
+      render: python
+      placeholder: |
+        # settings.py
+        CLOUDFLARE_IMAGES = {
+            'ACCOUNT_ID': 'my-account-id',
+            'API_TOKEN': 'my-api-token',
+        }
+
+        # views.py
+        from django_cloudflareimages_toolkit.services import cloudflare_service
+        
+        def my_view(request):
+            # What I tried...
+            image = cloudflare_service.create_direct_upload_url(
+                user=request.user
+            )
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Outcome
+      description: What result are you hoping to achieve?
+      placeholder: |
+        I expect to...
+        The result should be...
+        I want to see...
+
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current Behavior
+      description: What's happening instead? Include any error messages.
+      placeholder: |
+        Instead, I'm getting...
+        The error message is...
+        The behavior I see is...
+
+  - type: dropdown
+    id: django_version
+    attributes:
+      label: Django Version
+      description: Which version of Django are you using?
+      options:
+        - "5.2.x"
+        - "5.1.x"
+        - "5.0.x"
+        - "4.2.x (LTS)"
+        - "Other (please specify in additional context)"
+    validations:
+      required: true
+
+  - type: input
+    id: package_version
+    attributes:
+      label: django-cloudflareimages-toolkit Version
+      description: Which version of django-cloudflareimages-toolkit are you using?
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: question_type
+    attributes:
+      label: Question Type
+      description: What type of question is this?
+      options:
+        - "Configuration - How to set up or configure the toolkit"
+        - "Usage - How to use specific features or methods"
+        - "Integration - How to integrate with other Django features"
+        - "Troubleshooting - Something isn't working as expected"
+        - "Best Practices - Recommendations for implementation"
+        - "Cloudflare API - Questions about Cloudflare Images features"
+        - "Other - General questions"
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Current Configuration
+      description: Share your relevant configuration (remove sensitive data)
+      render: python
+      placeholder: |
+        # settings.py
+        INSTALLED_APPS = [
+            'rest_framework',
+            'django_cloudflareimages_toolkit',
+        ]
+        
+        CLOUDFLARE_IMAGES = {
+            'ACCOUNT_ID': 'your-account-id',
+            'API_TOKEN': 'your-api-token',
+            'DEFAULT_EXPIRY_MINUTES': 30,
+            'REQUIRE_SIGNED_URLS': True,
+        }
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other information that might be helpful
+      placeholder: |
+        Links to relevant documentation...
+        Screenshots of the issue...
+        Related code or configuration...

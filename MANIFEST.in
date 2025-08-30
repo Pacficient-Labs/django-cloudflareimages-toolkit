@@ -1,0 +1,15 @@
+include README.md
+include LICENSE
+include CONTRIBUTING.md
+include WEBHOOK_SETUP.md
+include pyproject.toml
+include uv.lock
+recursive-include django_cloudflareimages_toolkit *.py
+recursive-include django_cloudflareimages_toolkit/static *
+recursive-include django_cloudflareimages_toolkit/templates *
+recursive-include django_cloudflareimages_toolkit/management *
+recursive-include django_cloudflareimages_toolkit/templatetags *
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .DS_Store
+global-exclude *.egg-info
