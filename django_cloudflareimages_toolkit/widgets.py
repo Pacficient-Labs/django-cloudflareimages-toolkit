@@ -275,7 +275,7 @@ class CloudflareImageWidget(forms.TextInput):
             f'    ',
             f'    // Create preview image (you may need to adjust the URL format)',
             f'    const img = document.createElement("img");',
-            f'    img.src = `/cloudflare-images/image/${{imageId}}/thumbnail/`;',
+            f'    img.src = "/cloudflare-images/image/" + imageId + "/thumbnail/";',
             f'    img.style.maxWidth = "200px";',
             f'    img.style.maxHeight = "200px";',
             f'    img.alt = "Image preview";',
