@@ -17,11 +17,12 @@ User = get_user_model()
 
 class ImageUploadStatus(models.TextChoices):
     """Status choices for image uploads."""
-    PENDING = 'pending', 'Pending'
-    DRAFT = 'draft', 'Draft'
-    UPLOADED = 'uploaded', 'Uploaded'
-    FAILED = 'failed', 'Failed'
-    EXPIRED = 'expired', 'Expired'
+
+    PENDING = "pending", "Pending"
+    DRAFT = "draft", "Draft"
+    UPLOADED = "uploaded", "Uploaded"
+    FAILED = "failed", "Failed"
+    EXPIRED = "expired", "Expired"
 
 
 class CloudflareImage(models.Model):
@@ -29,16 +30,15 @@ class CloudflareImage(models.Model):
 
     # Primary identifiers
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    cloudflare_id = models.CharField(
-        max_length=255, unique=True, db_index=True)
+    cloudflare_id = models.CharField(max_length=255, unique=True, db_index=True)
 
     # User and metadata
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='cloudflare_images',
+        related_name="cloudflare_images",
         null=True,
-        blank=True
+        blank=True,
     )
     filename = models.CharField(max_length=255, blank=True)
     original_filename = models.CharField(max_length=255, blank=True)
@@ -50,7 +50,7 @@ class CloudflareImage(models.Model):
     status = models.CharField(
         max_length=20,
         choices=ImageUploadStatus.choices,
-        default=ImageUploadStatus.PENDING
+        default=ImageUploadStatus.PENDING,
     )
 
     # Cloudflare settings
@@ -68,12 +68,12 @@ class CloudflareImage(models.Model):
     cloudflare_metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:
-        db_table = 'cloudflare_images'
-        ordering = ['-created_at']
+        db_table = "cloudflare_images"
+        ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=['user', 'status']),
-            models.Index(fields=['status', 'created_at']),
-            models.Index(fields=['expires_at']),
+            models.Index(fields=["user", "status"]),
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["expires_at"]),
         ]
 
     def __str__(self) -> str:
@@ -94,7 +94,7 @@ class CloudflareImage(models.Model):
         """Get the public URL for the uploaded image."""
         if self.variants and isinstance(self.variants, list):
             for variant in self.variants:
-                if 'public' in variant:
+                if "public" in variant:
                     return variant
         return None
 
@@ -103,24 +103,24 @@ class CloudflareImage(models.Model):
         """Get the thumbnail URL for the uploaded image."""
         if self.variants and isinstance(self.variants, list):
             for variant in self.variants:
-                if 'thumbnail' in variant:
+                if "thumbnail" in variant:
                     return variant
         return None
 
     def update_from_cloudflare_response(self, response_data: dict[str, Any]) -> None:
         """Update model fields from Cloudflare API response."""
-        if 'uploaded' in response_data:
+        if "uploaded" in response_data:
             self.uploaded_at = timezone.now()
             self.status = ImageUploadStatus.UPLOADED
 
-        if 'draft' in response_data and response_data['draft']:
+        if "draft" in response_data and response_data["draft"]:
             self.status = ImageUploadStatus.DRAFT
 
-        if 'variants' in response_data:
-            self.variants = response_data['variants']
+        if "variants" in response_data:
+            self.variants = response_data["variants"]
 
-        if 'metadata' in response_data:
-            self.cloudflare_metadata = response_data['metadata']
+        if "metadata" in response_data:
+            self.cloudflare_metadata = response_data["metadata"]
 
         self.save()
 
@@ -129,9 +129,7 @@ class ImageUploadLog(models.Model):
     """Log model for tracking image upload events."""
 
     image = models.ForeignKey(
-        CloudflareImage,
-        on_delete=models.CASCADE,
-        related_name='logs'
+        CloudflareImage, on_delete=models.CASCADE, related_name="logs"
     )
     event_type = models.CharField(max_length=50)
     message = models.TextField()
@@ -139,11 +137,11 @@ class ImageUploadLog(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'cloudflare_image_logs'
-        ordering = ['-timestamp']
+        db_table = "cloudflare_image_logs"
+        ordering = ["-timestamp"]
         indexes = [
-            models.Index(fields=['image', 'timestamp']),
-            models.Index(fields=['event_type', 'timestamp']),
+            models.Index(fields=["image", "timestamp"]),
+            models.Index(fields=["event_type", "timestamp"]),
         ]
 
     def __str__(self) -> str:

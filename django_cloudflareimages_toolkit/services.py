@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 class CloudflareImagesError(Exception):
     """Base exception for Cloudflare Images operations."""
+
     pass
 
 
@@ -31,10 +32,12 @@ class CloudflareImagesService:
         self.api_token = cloudflare_settings.api_token
         self.base_url = cloudflare_settings.base_url
         self.session = requests.Session()
-        self.session.headers.update({
-            'Authorization': f'Bearer {self.api_token}',
-            'Content-Type': 'application/json'
-        })
+        self.session.headers.update(
+            {
+                "Authorization": f"Bearer {self.api_token}",
+                "Content-Type": "application/json",
+            }
+        )
 
     def create_direct_upload_url(
         self,
@@ -42,7 +45,7 @@ class CloudflareImagesService:
         custom_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         require_signed_urls: bool | None = None,
-        expiry_minutes: int | None = None
+        expiry_minutes: int | None = None,
     ) -> CloudflareImage:
         """
         Create a one-time upload URL for direct creator upload.
@@ -74,63 +77,64 @@ class CloudflareImagesService:
 
         # Prepare request data
         form_data = {
-            'requireSignedURLs': str(require_signed_urls).lower(),
-            'metadata': metadata
+            "requireSignedURLs": str(require_signed_urls).lower(),
+            "metadata": metadata,
         }
 
         if custom_id:
-            form_data['id'] = custom_id
+            form_data["id"] = custom_id
 
         # Make API request
         url = f"{self.base_url}/accounts/{self.account_id}/images/v2/direct_upload"
 
         try:
             # Use form data for this endpoint
-            self.session.headers.pop('Content-Type', None)
+            self.session.headers.pop("Content-Type", None)
             response = self.session.post(url, data=form_data)
             response.raise_for_status()
 
             data = response.json()
 
-            if not data.get('success'):
-                error_msg = ', '.join(
-                    [err.get('message', 'Unknown error') for err in data.get('errors', [])])
-                raise CloudflareImagesError(
-                    f"Cloudflare API error: {error_msg}")
+            if not data.get("success"):
+                error_msg = ", ".join(
+                    [
+                        err.get("message", "Unknown error")
+                        for err in data.get("errors", [])
+                    ]
+                )
+                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
 
-            result = data['result']
+            result = data["result"]
 
             # Create CloudflareImage record
             image = CloudflareImage.objects.create(
-                cloudflare_id=result['id'],
+                cloudflare_id=result["id"],
                 user=user,
-                upload_url=result['uploadURL'],
+                upload_url=result["uploadURL"],
                 status=ImageUploadStatus.PENDING,
                 require_signed_urls=require_signed_urls,
                 metadata=metadata,
-                expires_at=expires_at
+                expires_at=expires_at,
             )
 
             # Log the creation
             ImageUploadLog.objects.create(
                 image=image,
-                event_type='upload_url_created',
-                message='Direct upload URL created successfully',
-                data={'response': result}
+                event_type="upload_url_created",
+                message="Direct upload URL created successfully",
+                data={"response": result},
             )
 
-            logger.info(
-                f"Created direct upload URL for image {image.cloudflare_id}")
+            logger.info(f"Created direct upload URL for image {image.cloudflare_id}")
             return image
 
         except requests.RequestException as e:
             logger.error(f"Failed to create direct upload URL: {str(e)}")
-            raise CloudflareImagesError(
-                f"Failed to create upload URL: {str(e)}") from e
+            raise CloudflareImagesError(f"Failed to create upload URL: {str(e)}") from e
 
         finally:
             # Restore Content-Type header
-            self.session.headers['Content-Type'] = 'application/json'
+            self.session.headers["Content-Type"] = "application/json"
 
     def check_image_status(self, image: CloudflareImage) -> dict[str, Any]:
         """
@@ -153,13 +157,16 @@ class CloudflareImagesService:
 
             data = response.json()
 
-            if not data.get('success'):
-                error_msg = ', '.join(
-                    [err.get('message', 'Unknown error') for err in data.get('errors', [])])
-                raise CloudflareImagesError(
-                    f"Cloudflare API error: {error_msg}")
+            if not data.get("success"):
+                error_msg = ", ".join(
+                    [
+                        err.get("message", "Unknown error")
+                        for err in data.get("errors", [])
+                    ]
+                )
+                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
 
-            result = data['result']
+            result = data["result"]
 
             # Update the image record
             image.update_from_cloudflare_response(result)
@@ -167,20 +174,23 @@ class CloudflareImagesService:
             # Log the status check
             ImageUploadLog.objects.create(
                 image=image,
-                event_type='status_checked',
-                message=f'Image status checked: {image.status}',
-                data={'response': result}
+                event_type="status_checked",
+                message=f"Image status checked: {image.status}",
+                data={"response": result},
             )
 
             logger.info(
-                f"Checked status for image {image.cloudflare_id}: {image.status}")
+                f"Checked status for image {image.cloudflare_id}: {image.status}"
+            )
             return result
 
         except requests.RequestException as e:
             logger.error(
-                f"Failed to check image status for {image.cloudflare_id}: {str(e)}")
+                f"Failed to check image status for {image.cloudflare_id}: {str(e)}"
+            )
             raise CloudflareImagesError(
-                f"Failed to check image status: {str(e)}") from e
+                f"Failed to check image status: {str(e)}"
+            ) from e
 
     def delete_image(self, image: CloudflareImage) -> bool:
         """
@@ -203,28 +213,29 @@ class CloudflareImagesService:
 
             data = response.json()
 
-            if not data.get('success'):
-                error_msg = ', '.join(
-                    [err.get('message', 'Unknown error') for err in data.get('errors', [])])
-                raise CloudflareImagesError(
-                    f"Cloudflare API error: {error_msg}")
+            if not data.get("success"):
+                error_msg = ", ".join(
+                    [
+                        err.get("message", "Unknown error")
+                        for err in data.get("errors", [])
+                    ]
+                )
+                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
 
             # Log the deletion
             ImageUploadLog.objects.create(
                 image=image,
-                event_type='image_deleted',
-                message='Image deleted from Cloudflare',
-                data={'response': data}
+                event_type="image_deleted",
+                message="Image deleted from Cloudflare",
+                data={"response": data},
             )
 
             logger.info(f"Deleted image {image.cloudflare_id}")
             return True
 
         except requests.RequestException as e:
-            logger.error(
-                f"Failed to delete image {image.cloudflare_id}: {str(e)}")
-            raise CloudflareImagesError(
-                f"Failed to delete image: {str(e)}") from e
+            logger.error(f"Failed to delete image {image.cloudflare_id}: {str(e)}")
+            raise CloudflareImagesError(f"Failed to delete image: {str(e)}") from e
 
     def validate_webhook_signature(self, payload: bytes, signature: str) -> bool:
         """
@@ -239,20 +250,19 @@ class CloudflareImagesService:
         """
         if not cloudflare_settings.webhook_secret:
             logger.warning(
-                "Webhook secret not configured, skipping signature validation")
+                "Webhook secret not configured, skipping signature validation"
+            )
             return True
 
         import hashlib
         import hmac
 
         # Remove 'sha256=' prefix if present
-        if signature.startswith('sha256='):
+        if signature.startswith("sha256="):
             signature = signature[7:]
 
         expected_signature = hmac.new(
-            cloudflare_settings.webhook_secret.encode(),
-            payload,
-            hashlib.sha256
+            cloudflare_settings.webhook_secret.encode(), payload, hashlib.sha256
         ).hexdigest()
 
         return hmac.compare_digest(signature, expected_signature)
@@ -268,7 +278,7 @@ class CloudflareImagesService:
             Updated CloudflareImage instance if found
         """
         try:
-            image_id = payload.get('id')
+            image_id = payload.get("id")
             if not image_id:
                 logger.warning("Webhook payload missing image ID")
                 return None
@@ -276,8 +286,7 @@ class CloudflareImagesService:
             try:
                 image = CloudflareImage.objects.get(cloudflare_id=image_id)
             except CloudflareImage.DoesNotExist:
-                logger.warning(
-                    f"Received webhook for unknown image: {image_id}")
+                logger.warning(f"Received webhook for unknown image: {image_id}")
                 return None
 
             # Update image from webhook data
@@ -286,9 +295,9 @@ class CloudflareImagesService:
             # Log the webhook
             ImageUploadLog.objects.create(
                 image=image,
-                event_type='webhook_received',
-                message='Webhook processed successfully',
-                data={'payload': payload}
+                event_type="webhook_received",
+                message="Webhook processed successfully",
+                data={"payload": payload},
             )
 
             logger.info(f"Processed webhook for image {image.cloudflare_id}")

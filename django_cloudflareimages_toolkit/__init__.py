@@ -19,6 +19,7 @@ from .transformations import (
 try:
     from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
     from .services import CloudflareImagesError, cloudflare_service
+
     _django_available = True
 except (ImportError, Exception):
     # Django not configured or not available
@@ -31,17 +32,19 @@ except (ImportError, Exception):
 
 # Define what gets imported with "from django_cloudflareimages_toolkit import *"
 __all__ = [
-    'CloudflareImageTransform',
-    'CloudflareImageVariants',
-    'CloudflareImageUtils',
+    "CloudflareImageTransform",
+    "CloudflareImageVariants",
+    "CloudflareImageUtils",
 ]
 
 # Add Django components if available
 if _django_available:
-    __all__.extend([
-        'CloudflareImage',
-        'ImageUploadLog',
-        'ImageUploadStatus',
-        'cloudflare_service',
-        'CloudflareImagesError',
-    ])
+    __all__.extend(
+        [
+            "CloudflareImage",
+            "ImageUploadLog",
+            "ImageUploadStatus",
+            "cloudflare_service",
+            "CloudflareImagesError",
+        ]
+    )
