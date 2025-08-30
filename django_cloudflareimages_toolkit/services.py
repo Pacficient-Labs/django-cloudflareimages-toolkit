@@ -5,6 +5,7 @@ This module contains the business logic for interacting with the
 Cloudflare Images API, managing image uploads, and transformations.
 """
 
+import json
 import logging
 from datetime import timedelta
 from typing import Any
@@ -98,7 +99,7 @@ class CloudflareImagesService:
         # Prepare request data
         form_data = {
             "requireSignedURLs": str(require_signed_urls).lower(),
-            "metadata": metadata,
+            "metadata": json.dumps(metadata),
         }
 
         if custom_id:
@@ -110,7 +111,7 @@ class CloudflareImagesService:
         try:
             # Use form data for this endpoint
             self.session.headers.pop("Content-Type", None)
-            response = self.session.post(url, data=form_data)
+            response = self.session.post(url, files=form_data)
             response.raise_for_status()
 
             data = response.json()
