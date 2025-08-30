@@ -5,7 +5,7 @@ A comprehensive Django toolkit that provides secure image upload functionality,
 transformations, and management using Cloudflare Images.
 """
 
-__version__ = "1.0.5"
+__version__ = "1.0.6"
 __author__ = "PacNPal"
 
 # Always import transformation utilities (Django-independent)
