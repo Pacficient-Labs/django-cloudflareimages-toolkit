@@ -5,8 +5,7 @@ This module provides custom Django model fields that integrate seamlessly
 with Cloudflare Images, handling upload URLs, validation, and image management.
 """
 
-import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional
 
 from django import forms
 from django.core.exceptions import ValidationError
@@ -31,12 +30,12 @@ class CloudflareImageField(models.Field):
 
     def __init__(
         self,
-        variants: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        variants: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         require_signed_urls: bool = False,
-        max_file_size: Optional[int] = None,
-        allowed_formats: Optional[List[str]] = None,
-        **kwargs
+        max_file_size: int | None = None,
+        allowed_formats: list[str] | None = None,
+        **kwargs,
     ):
         """
         Initialize the CloudflareImageField.
@@ -53,21 +52,20 @@ class CloudflareImageField(models.Field):
         self.metadata = metadata or {}
         self.require_signed_urls = require_signed_urls
         self.max_file_size = max_file_size
-        self.allowed_formats = allowed_formats or [
-            'jpeg', 'png', 'gif', 'webp']
+        self.allowed_formats = allowed_formats or ["jpeg", "png", "gif", "webp"]
 
         # Set default field options
-        kwargs.setdefault('max_length', 255)
-        kwargs.setdefault('blank', True)
-        kwargs.setdefault('null', True)
+        kwargs.setdefault("max_length", 255)
+        kwargs.setdefault("blank", True)
+        kwargs.setdefault("null", True)
 
         super().__init__(**kwargs)
 
     def get_internal_type(self) -> str:
         """Return the internal field type for Django."""
-        return 'CharField'
+        return "CharField"
 
-    def to_python(self, value: Any) -> Optional['CloudflareImageFieldValue']:
+    def to_python(self, value: Any) -> Optional["CloudflareImageFieldValue"]:
         """
         Convert the database value to a Python object.
 
@@ -77,7 +75,7 @@ class CloudflareImageField(models.Field):
         Returns:
             CloudflareImageFieldValue instance or None
         """
-        if value is None or value == '':
+        if value is None or value == "":
             return None
 
         if isinstance(value, CloudflareImageFieldValue):
@@ -88,15 +86,17 @@ class CloudflareImageField(models.Field):
             return CloudflareImageFieldValue(value, field=self)
 
         raise ValidationError(
-            _('Invalid value for CloudflareImageField: %(value)s'),
-            params={'value': value}
+            _("Invalid value for CloudflareImageField: %(value)s"),
+            params={"value": value},
         )
 
-    def from_db_value(self, value: Any, expression, connection) -> Optional['CloudflareImageFieldValue']:
+    def from_db_value(
+        self, value: Any, expression, connection
+    ) -> Optional["CloudflareImageFieldValue"]:
         """Convert database value to Python object."""
         return self.to_python(value)
 
-    def get_prep_value(self, value: Any) -> Optional[str]:
+    def get_prep_value(self, value: Any) -> str | None:
         """
         Convert Python object to database value.
 
@@ -120,14 +120,14 @@ class CloudflareImageField(models.Field):
     def formfield(self, **kwargs) -> forms.Field:
         """Return the form field for this model field."""
         defaults = {
-            'widget': CloudflareImageWidget(
+            "widget": CloudflareImageWidget(
                 variants=self.variants,
                 metadata=self.metadata,
                 require_signed_urls=self.require_signed_urls,
                 max_file_size=self.max_file_size,
                 allowed_formats=self.allowed_formats,
             ),
-            'required': not self.blank,
+            "required": not self.blank,
         }
         defaults.update(kwargs)
         return forms.CharField(**defaults)
@@ -146,15 +146,15 @@ class CloudflareImageField(models.Field):
 
         # Add custom field options to kwargs
         if self.variants:
-            kwargs['variants'] = self.variants
+            kwargs["variants"] = self.variants
         if self.metadata:
-            kwargs['metadata'] = self.metadata
+            kwargs["metadata"] = self.metadata
         if self.require_signed_urls:
-            kwargs['require_signed_urls'] = self.require_signed_urls
+            kwargs["require_signed_urls"] = self.require_signed_urls
         if self.max_file_size:
-            kwargs['max_file_size'] = self.max_file_size
-        if self.allowed_formats != ['jpeg', 'png', 'gif', 'webp']:
-            kwargs['allowed_formats'] = self.allowed_formats
+            kwargs["max_file_size"] = self.max_file_size
+        if self.allowed_formats != ["jpeg", "png", "gif", "webp"]:
+            kwargs["allowed_formats"] = self.allowed_formats
 
         return name, path, args, kwargs
 
@@ -167,7 +167,7 @@ class CloudflareImageFieldValue:
     while storing only the Cloudflare image ID in the database.
     """
 
-    def __init__(self, cloudflare_id: str, field: Optional[CloudflareImageField] = None):
+    def __init__(self, cloudflare_id: str, field: CloudflareImageField | None = None):
         """
         Initialize the field value.
 
@@ -196,7 +196,7 @@ class CloudflareImageFieldValue:
         return False
 
     @property
-    def cloudflare_image(self) -> Optional[CloudflareImage]:
+    def cloudflare_image(self) -> CloudflareImage | None:
         """
         Get the associated CloudflareImage model instance.
 
@@ -212,7 +212,7 @@ class CloudflareImageFieldValue:
                 pass
         return self._cloudflare_image
 
-    def get_url(self, variant: str = 'public') -> Optional[str]:
+    def get_url(self, variant: str = "public") -> str | None:
         """
         Get the image URL for a specific variant.
 
@@ -232,6 +232,7 @@ class CloudflareImageFieldValue:
         # Fallback to generating URL from service
         try:
             from .settings import cloudflare_settings
+
             account_id = cloudflare_settings.account_id
 
             if account_id:
@@ -241,7 +242,7 @@ class CloudflareImageFieldValue:
 
         return None
 
-    def get_signed_url(self, variant: str = 'public', expiry: int = 3600) -> Optional[str]:
+    def get_signed_url(self, variant: str = "public", expiry: int = 3600) -> str | None:
         """
         Get a signed URL for the image.
 
@@ -276,7 +277,7 @@ class CloudflareImageFieldValue:
         except Exception:
             return False
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         """
         Get image metadata.
 
@@ -287,7 +288,7 @@ class CloudflareImageFieldValue:
             return self.cloudflare_image.metadata
         return {}
 
-    def update_metadata(self, metadata: Dict[str, Any]) -> bool:
+    def update_metadata(self, metadata: dict[str, Any]) -> bool:
         """
         Update image metadata.
 
@@ -311,7 +312,7 @@ class CloudflareImageFieldValue:
             return False
 
     @property
-    def variants(self) -> List[str]:
+    def variants(self) -> list[str]:
         """
         Get available image variants.
 
@@ -323,14 +324,14 @@ class CloudflareImageFieldValue:
         return []
 
     @property
-    def file_size(self) -> Optional[int]:
+    def file_size(self) -> int | None:
         """Get image file size in bytes."""
         if self.cloudflare_image:
             return self.cloudflare_image.file_size
         return None
 
     @property
-    def filename(self) -> Optional[str]:
+    def filename(self) -> str | None:
         """Get original filename."""
         if self.cloudflare_image:
             return self.cloudflare_image.filename
@@ -347,5 +348,5 @@ class CloudflareImageFieldValue:
     def is_ready(self) -> bool:
         """Check if image processing is complete."""
         if self.cloudflare_image:
-            return self.cloudflare_image.status == 'uploaded'
+            return self.cloudflare_image.status == "uploaded"
         return False

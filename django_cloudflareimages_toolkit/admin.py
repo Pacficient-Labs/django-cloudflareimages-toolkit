@@ -12,9 +12,9 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
+from .exceptions import CloudflareImagesError
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
 from .services import cloudflare_service
-from .exceptions import CloudflareImagesError
 
 
 class ImageUploadLogInline(admin.TabularInline):
@@ -463,8 +463,7 @@ class CloudflareImageAdmin(admin.ModelAdmin):
             except CloudflareImagesError:
                 pass
 
-        self.message_user(
-            request, f"Refreshed status for {updated_count} images.")
+        self.message_user(request, f"Refreshed status for {updated_count} images.")
 
     refresh_all_status.short_description = "Refresh all pending/draft status"
 
@@ -498,8 +497,7 @@ class ImageUploadLogAdmin(admin.ModelAdmin):
         "image__user__username",
     )
 
-    readonly_fields = ("image", "event_type", "message",
-                       "formatted_data", "timestamp")
+    readonly_fields = ("image", "event_type", "message", "formatted_data", "timestamp")
 
     fields = ("image", "event_type", "message", "formatted_data", "timestamp")
 

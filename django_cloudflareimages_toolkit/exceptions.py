@@ -9,7 +9,12 @@ for better error handling and debugging.
 class CloudflareImagesError(Exception):
     """Base exception class for all Cloudflare Images related errors."""
 
-    def __init__(self, message: str, status_code: int | None = None, response_data: dict | None = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        response_data: dict | None = None,
+    ):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
@@ -26,6 +31,7 @@ class CloudflareImagesAPIError(CloudflareImagesError):
     - Invalid API response format
     - Authentication failures
     """
+
     pass
 
 
@@ -38,6 +44,7 @@ class ConfigurationError(CloudflareImagesError):
     - Invalid configuration values
     - Missing environment variables
     """
+
     pass
 
 
@@ -51,6 +58,7 @@ class ValidationError(CloudflareImagesError):
     - Field validation errors
     - Image processing validation failures
     """
+
     pass
 
 
@@ -63,6 +71,7 @@ class UploadError(CloudflareImagesError):
     - File upload to Cloudflare fails
     - Upload size limits exceeded
     """
+
     pass
 
 
@@ -75,4 +84,5 @@ class ImageNotFoundError(CloudflareImagesError):
     - Image has been deleted
     - Access denied to image
     """
+
     pass
