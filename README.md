@@ -307,7 +307,7 @@ https://yourdomain.com/cloudflare-images/api/webhook/
 
 The webhook endpoint will automatically update image status when uploads complete.
 
-**📋 For detailed webhook setup instructions, see [WEBHOOK_SETUP.md](WEBHOOK_SETUP.md)**
+**📋 For detailed webhook setup instructions, see the [Webhook Configuration documentation](https://django-cloudflareimages-toolkit.readthedocs.io/en/latest/webhooks.html)**
 
 This guide includes:
 - Step-by-step Cloudflare dashboard configuration

@@ -10,6 +10,7 @@ Django integration for Cloudflare Images API with secure direct upload support.
    installation
    configuration
    usage
+   webhooks
    api
 
 Overview
