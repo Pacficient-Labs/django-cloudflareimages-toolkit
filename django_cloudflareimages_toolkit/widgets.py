@@ -145,13 +145,7 @@ class CloudflareImageWidget(forms.TextInput):
             # JavaScript for handling uploads
             '<script>',
             '(function() {',
-            f'  const config = {json.dumps({
-                "variants": self.variants,
-                "metadata": self.metadata,
-                "require_signed_urls": self.require_signed_urls,
-                "max_file_size": self.max_file_size,
-                "allowed_formats": self.allowed_formats,
-            })};',
+            f'  const config = {json.dumps({"variants": self.variants, "metadata": self.metadata, "require_signed_urls": self.require_signed_urls, "max_file_size": self.max_file_size, "allowed_formats": self.allowed_formats})};',
             f'  const fieldId = "{field_id}";',
             f'  const uploadId = "{upload_id}";',
             f'  const previewId = "{preview_id}";',
