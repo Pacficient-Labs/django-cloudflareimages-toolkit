@@ -290,3 +290,5 @@ coverage.xml
 # Security
 secrets.json
 .secrets
+PACKAGE_SUMMARY.md
+WEBHOOK_SETUP.md

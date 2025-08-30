@@ -1,0 +1,195 @@
+# django-cloudflareimages-toolkit
+
+Comprehensive Django toolkit for Cloudflare Images with Direct Creator Upload, advanced transformations, and secure upload workflows.
+
+## Overview
+
+django-cloudflareimages-toolkit is a production-ready Django package that provides complete integration with Cloudflare Images API. It offers Direct Creator Upload functionality, comprehensive image management, advanced transformations, Django admin integration, RESTful API endpoints, template tags, webhook support, and management commands.
+
+## Key Features
+
+- **Direct Creator Upload**: Secure image uploads without exposing API keys to clients
+- **Comprehensive Image Management**: Track upload status, metadata, and variants with database models
+- **Advanced Transformations**: Full support for Cloudflare Images transformations with predefined variants
+- **Django Admin Integration**: Rich admin interface with thumbnails, bulk actions, and upload logs
+- **RESTful API**: Complete API endpoints for upload URL creation and image management
+- **Template Tags**: Easy Django template integration with responsive image support
+- **Webhook Support**: Handle Cloudflare webhook notifications with HMAC signature validation
+- **Management Commands**: CLI tools for cleanup and maintenance operations
+- **Type Safety**: Full type hints throughout the codebase with mypy compatibility
+- **Standalone Usage**: Transformation utilities work without Django configuration
+
+## Quick Start
+
+Install the package:
+```bash
+# Using uv (recommended)
+uv add django-cloudflareimages-toolkit
+
+# Using pip
+pip install django-cloudflareimages-toolkit
+```
+
+Add to your Django settings:
+```python
+INSTALLED_APPS = [
+    # ... other apps
+    'rest_framework',
+    'django_cloudflareimages_toolkit',
+]
+
+CLOUDFLARE_IMAGES = {
+    'ACCOUNT_ID': 'your-cloudflare-account-id',
+    'API_TOKEN': 'your-cloudflare-api-token',
+    'DEFAULT_EXPIRY_MINUTES': 30,
+    'REQUIRE_SIGNED_URLS': True,
+    'WEBHOOK_SECRET': 'your-webhook-secret',
+    'MAX_FILE_SIZE_MB': 10,
+}
+```
+
+Use the service:
+```python
+from django_cloudflareimages_toolkit.services import cloudflare_service
+
+# Create direct upload URL
+image = cloudflare_service.create_direct_upload_url(
+    user=request.user,
+    metadata={'type': 'avatar', 'user_id': '123'},
+    require_signed_urls=True,
+    expiry_minutes=60
+)
+
+# Use transformations
+from django_cloudflareimages_toolkit.transformations import CloudflareImageVariants
+thumbnail_url = CloudflareImageVariants.thumbnail(image.public_url, 200)
+```
+
+Use in templates:
+```django
+{% load cloudflare_images %}
+
+<!-- Simple thumbnail -->
+{% cf_thumbnail image.public_url 200 %}
+
+<!-- Responsive image -->
+{% cf_responsive_img image.public_url "Alt text" "img-class" "320,640,1024" %}
+
+<!-- Upload form -->
+{% cf_upload_form %}
+```
+
+## Requirements
+
+- Django 4.2+
+- Python 3.10+
+- Django REST Framework 3.14+
+- Cloudflare Images account and API token
+- Pillow (for image processing)
+- Requests (for HTTP client)
+
+## Links
+
+- **PyPI**: https://pypi.org/project/django-cloudflareimages-toolkit/
+- **GitHub**: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit
+- **Documentation**: https://django-cloudflareimages-toolkit.readthedocs.io/
+- **Issues**: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/issues
+- **Discussions**: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/discussions
+
+## Project Structure
+
+```
+django-cloudflareimages-toolkit/
+├── django_cloudflareimages_toolkit/    # Main package
+│   ├── __init__.py                     # Smart imports with Django/standalone support
+│   ├── apps.py                         # Django app configuration
+│   ├── models.py                       # CloudflareImage and ImageUploadLog models
+│   ├── services.py                     # CloudflareService for API interactions
+│   ├── transformations.py              # Image transformation utilities
+│   ├── views.py                        # RESTful API views
+│   ├── serializers.py                  # DRF serializers
+│   ├── urls.py                         # URL patterns
+│   ├── admin.py                        # Comprehensive Django admin
+│   ├── settings.py                     # Settings configuration
+│   ├── management/commands/            # Management commands
+│   ├── templatetags/                   # Django template tags
+│   └── static/admin/                   # Admin static files
+├── tests/                              # Test suite with Django integration
+├── docs/                               # Sphinx documentation
+├── .github/                            # GitHub workflows and issue templates
+├── pyproject.toml                      # Package configuration with uv support
+├── README.md                           # Comprehensive documentation
+├── CONTRIBUTING.md                     # Contribution guidelines
+├── WEBHOOK_SETUP.md                    # Webhook configuration guide
+└── LICENSE                             # MIT license
+```
+
+## Core Components
+
+### Models
+- **CloudflareImage**: Tracks image uploads with status, metadata, and variants
+- **ImageUploadLog**: Audit trail for all image-related events
+
+### Services
+- **CloudflareService**: Main service class for API interactions
+- **Webhook handling**: HMAC signature validation and status updates
+
+### Transformations
+- **CloudflareImageTransform**: Fluent API for building transformation URLs
+- **CloudflareImageVariants**: Predefined variants (thumbnail, avatar, hero, etc.)
+- **CloudflareImageUtils**: URL utilities and validation
+
+### API Endpoints
+- `POST /api/upload-url/` - Create direct upload URLs
+- `GET /api/images/` - List images with filtering
+- `POST /api/images/{id}/check_status/` - Check image status
+- `GET /api/stats/` - Get upload statistics
+- `POST /api/webhook/` - Handle Cloudflare webhooks
+
+### Template Tags
+- `cf_thumbnail` - Generate thumbnail URLs
+- `cf_avatar` - Generate avatar URLs
+- `cf_hero_image` - Generate hero image URLs
+- `cf_responsive_img` - Generate responsive images with srcset
+- `cf_upload_form` - Render upload forms
+
+### Management Commands
+- `cleanup_expired_images` - Clean up expired upload URLs and old images
+
+## Advanced Features
+
+### Webhook Integration
+- Automatic status updates from Cloudflare
+- HMAC signature validation for security
+- Support for all Cloudflare Images webhook events
+- Comprehensive setup documentation
+
+### Admin Interface
+- Rich Django admin with image thumbnails
+- Bulk actions for status checking and cleanup
+- Inline upload logs for debugging
+- Search and filtering capabilities
+- Transformation examples and previews
+
+### Responsive Images
+- Automatic srcset generation for different screen sizes
+- Configurable breakpoints and sizes
+- WebP format support with fallbacks
+- Device pixel ratio (DPR) support
+
+### Security
+- API key protection (never exposed to client-side)
+- HMAC webhook signature validation
+- Configurable upload URL expiration
+- Signed URL support for private images
+- Input validation and sanitization
+
+## Version Information
+
+- **Current Version**: 1.0.0
+- **Python Support**: 3.10+
+- **Django Support**: 4.2+
+- **License**: MIT
+- **Status**: Production Ready
+- **Author**: PacNPal <pac@pacnp.al>
+- **Organization**: Pacificient Labs
