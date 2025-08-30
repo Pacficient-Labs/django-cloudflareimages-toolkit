@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "django-cloudflareimages-toolkit"
-version = "1.0.3"
+version = "1.0.4"
 description = "Comprehensive Django toolkit for Cloudflare Images with direct creator upload, transformations, and management"
 readme = "README.md"
 license = {file = "LICENSE"}
