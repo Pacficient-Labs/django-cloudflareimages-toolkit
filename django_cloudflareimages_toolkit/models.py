@@ -5,11 +5,12 @@ This module contains the database models for tracking image uploads,
 transformations, and their status throughout the upload process.
 """
 
-from django.db import models
-from django.contrib.auth import get_user_model
-from django.utils import timezone
-from typing import Optional, Dict, Any
 import uuid
+from typing import Any
+
+from django.contrib.auth import get_user_model
+from django.db import models
+from django.utils import timezone
 
 User = get_user_model()
 
@@ -89,7 +90,7 @@ class CloudflareImage(models.Model):
         return self.status == ImageUploadStatus.UPLOADED
 
     @property
-    def public_url(self) -> Optional[str]:
+    def public_url(self) -> str | None:
         """Get the public URL for the uploaded image."""
         if self.variants and isinstance(self.variants, list):
             for variant in self.variants:
@@ -98,7 +99,7 @@ class CloudflareImage(models.Model):
         return None
 
     @property
-    def thumbnail_url(self) -> Optional[str]:
+    def thumbnail_url(self) -> str | None:
         """Get the thumbnail URL for the uploaded image."""
         if self.variants and isinstance(self.variants, list):
             for variant in self.variants:
@@ -106,7 +107,7 @@ class CloudflareImage(models.Model):
                     return variant
         return None
 
-    def update_from_cloudflare_response(self, response_data: Dict[str, Any]) -> None:
+    def update_from_cloudflare_response(self, response_data: dict[str, Any]) -> None:
         """Update model fields from Cloudflare API response."""
         if 'uploaded' in response_data:
             self.uploaded_at = timezone.now()

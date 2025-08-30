@@ -3,9 +3,8 @@ Test basic imports and package structure
 """
 
 import pytest
-import django
-from django.test import TestCase
 from django.conf import settings
+from django.test import TestCase
 
 
 class TestImports(TestCase):
@@ -18,7 +17,10 @@ class TestImports(TestCase):
 
     def test_model_imports(self):
         """Test that model imports work"""
-        from django_cloudflareimages_toolkit.models import CloudflareImage, ImageUploadLog
+        from django_cloudflareimages_toolkit.models import (
+            CloudflareImage,
+            ImageUploadLog,
+        )
         self.assertTrue(hasattr(CloudflareImage, 'cloudflare_id'))
         self.assertTrue(hasattr(ImageUploadLog, 'image'))
 
@@ -32,12 +34,13 @@ class TestImports(TestCase):
         """Test that transformation imports work"""
         from django_cloudflareimages_toolkit.transformations import (
             CloudflareImageTransform,
+            CloudflareImageUtils,
             CloudflareImageVariants,
-            CloudflareImageUtils
         )
         self.assertTrue(hasattr(CloudflareImageTransform, 'width'))
         self.assertTrue(hasattr(CloudflareImageVariants, 'thumbnail'))
-        self.assertTrue(hasattr(CloudflareImageUtils, 'is_cloudflare_url'))
+        self.assertTrue(hasattr(CloudflareImageUtils,
+                        'is_cloudflare_image_url'))
 
     def test_admin_imports(self):
         """Test that admin imports work"""
@@ -58,7 +61,9 @@ class TestTransformations(TestCase):
 
     def test_cloudflare_image_transform(self):
         """Test CloudflareImageTransform functionality"""
-        from django_cloudflareimages_toolkit.transformations import CloudflareImageTransform
+        from django_cloudflareimages_toolkit.transformations import (
+            CloudflareImageTransform,
+        )
 
         base_url = "https://imagedelivery.net/Vi7wi5KSItxGFsWRG2Us6Q/test-image-id/public"
         transform = CloudflareImageTransform(base_url)
@@ -69,7 +74,9 @@ class TestTransformations(TestCase):
 
     def test_cloudflare_image_variants(self):
         """Test CloudflareImageVariants functionality"""
-        from django_cloudflareimages_toolkit.transformations import CloudflareImageVariants
+        from django_cloudflareimages_toolkit.transformations import (
+            CloudflareImageVariants,
+        )
 
         base_url = "https://imagedelivery.net/Vi7wi5KSItxGFsWRG2Us6Q/test-image-id/public"
 
@@ -84,9 +91,9 @@ class TestTransformations(TestCase):
         cloudflare_url = "https://imagedelivery.net/Vi7wi5KSItxGFsWRG2Us6Q/test-image-id/public"
         non_cloudflare_url = "https://example.com/image.jpg"
 
-        self.assertTrue(CloudflareImageUtils.is_cloudflare_url(cloudflare_url))
+        self.assertTrue(CloudflareImageUtils.is_cloudflare_image_url(cloudflare_url))
         self.assertFalse(
-            CloudflareImageUtils.is_cloudflare_url(non_cloudflare_url))
+            CloudflareImageUtils.is_cloudflare_image_url(non_cloudflare_url))
 
         image_id = CloudflareImageUtils.extract_image_id(cloudflare_url)
         self.assertEqual(image_id, "test-image-id")

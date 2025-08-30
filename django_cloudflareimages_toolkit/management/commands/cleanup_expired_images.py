@@ -3,8 +3,8 @@ Management command to clean up expired image upload URLs.
 """
 
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 from django.db import transaction
+from django.utils import timezone
 
 from django_cloudflareimages_toolkit import CloudflareImage, ImageUploadStatus
 

@@ -5,15 +5,15 @@ This module contains the business logic for interacting with the
 Cloudflare Images API, managing image uploads, and transformations.
 """
 
-import requests
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Tuple
-from django.utils import timezone
-from django.core.exceptions import ValidationError
+from datetime import timedelta
+from typing import Any
 
-from .settings import cloudflare_settings
+import requests
+from django.utils import timezone
+
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
+from .settings import cloudflare_settings
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +39,10 @@ class CloudflareImagesService:
     def create_direct_upload_url(
         self,
         user=None,
-        custom_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        require_signed_urls: Optional[bool] = None,
-        expiry_minutes: Optional[int] = None
+        custom_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        require_signed_urls: bool | None = None,
+        expiry_minutes: int | None = None
     ) -> CloudflareImage:
         """
         Create a one-time upload URL for direct creator upload.
@@ -126,13 +126,13 @@ class CloudflareImagesService:
         except requests.RequestException as e:
             logger.error(f"Failed to create direct upload URL: {str(e)}")
             raise CloudflareImagesError(
-                f"Failed to create upload URL: {str(e)}")
+                f"Failed to create upload URL: {str(e)}") from e
 
         finally:
             # Restore Content-Type header
             self.session.headers['Content-Type'] = 'application/json'
 
-    def check_image_status(self, image: CloudflareImage) -> Dict[str, Any]:
+    def check_image_status(self, image: CloudflareImage) -> dict[str, Any]:
         """
         Check the status of an image upload.
 
@@ -180,7 +180,7 @@ class CloudflareImagesService:
             logger.error(
                 f"Failed to check image status for {image.cloudflare_id}: {str(e)}")
             raise CloudflareImagesError(
-                f"Failed to check image status: {str(e)}")
+                f"Failed to check image status: {str(e)}") from e
 
     def delete_image(self, image: CloudflareImage) -> bool:
         """
@@ -223,7 +223,8 @@ class CloudflareImagesService:
         except requests.RequestException as e:
             logger.error(
                 f"Failed to delete image {image.cloudflare_id}: {str(e)}")
-            raise CloudflareImagesError(f"Failed to delete image: {str(e)}")
+            raise CloudflareImagesError(
+                f"Failed to delete image: {str(e)}") from e
 
     def validate_webhook_signature(self, payload: bytes, signature: str) -> bool:
         """
@@ -241,8 +242,8 @@ class CloudflareImagesService:
                 "Webhook secret not configured, skipping signature validation")
             return True
 
-        import hmac
         import hashlib
+        import hmac
 
         # Remove 'sha256=' prefix if present
         if signature.startswith('sha256='):
@@ -256,7 +257,7 @@ class CloudflareImagesService:
 
         return hmac.compare_digest(signature, expected_signature)
 
-    def process_webhook(self, payload: Dict[str, Any]) -> Optional[CloudflareImage]:
+    def process_webhook(self, payload: dict[str, Any]) -> CloudflareImage | None:
         """
         Process webhook payload from Cloudflare.
 

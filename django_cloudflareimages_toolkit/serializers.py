@@ -4,9 +4,9 @@ Serializers for Cloudflare Images Direct Creator Upload.
 This module contains the DRF serializers for API endpoints.
 """
 
-from rest_framework import serializers
-from typing import Dict, Any, Optional
+
 from django.contrib.auth import get_user_model
+from rest_framework import serializers
 
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
 

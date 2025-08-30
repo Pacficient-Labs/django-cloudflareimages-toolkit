@@ -5,17 +5,15 @@ This module provides comprehensive admin interfaces for monitoring and managing
 Cloudflare images, upload logs, and system statistics.
 """
 
-from django.contrib import admin
-from django.utils.html import format_html
-from django.utils.safestring import mark_safe
-from django.urls import reverse
-from django.db.models import Count, Q
-from django.utils import timezone
-from typing import Any, List, Optional
 import json
 
+from django.contrib import admin
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.html import format_html
+
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
-from .services import cloudflare_service, CloudflareImagesError
+from .services import CloudflareImagesError, cloudflare_service
 
 
 class ImageUploadLogInline(admin.TabularInline):

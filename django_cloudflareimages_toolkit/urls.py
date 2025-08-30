@@ -4,15 +4,15 @@ URL configuration for Cloudflare Images Direct Creator Upload.
 This module defines the URL patterns for the API endpoints.
 """
 
-from django.urls import path, include
+from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    CleanupExpiredView,
     CloudflareImageViewSet,
     CreateUploadURLView,
-    WebhookView,
     ImageStatsView,
-    CleanupExpiredView
+    WebhookView,
 )
 
 app_name = 'cloudflare_images'

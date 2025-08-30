@@ -11,14 +11,14 @@ __author__ = "PacNPal"
 # Always import transformation utilities (Django-independent)
 from .transformations import (
     CloudflareImageTransform,
+    CloudflareImageUtils,
     CloudflareImageVariants,
-    CloudflareImageUtils
 )
 
 # Try to import Django-dependent components
 try:
     from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
-    from .services import cloudflare_service, CloudflareImagesError
+    from .services import CloudflareImagesError, cloudflare_service
     _django_available = True
 except (ImportError, Exception):
     # Django not configured or not available

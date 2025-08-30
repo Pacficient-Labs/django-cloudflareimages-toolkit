@@ -5,8 +5,8 @@ This module contains the configuration settings needed for the
 Cloudflare Images integration.
 """
 
+
 from django.conf import settings
-from typing import Optional
 
 
 class CloudflareImagesSettings:
@@ -47,7 +47,7 @@ class CloudflareImagesSettings:
         return self._settings.get('REQUIRE_SIGNED_URLS', True)
 
     @property
-    def webhook_secret(self) -> Optional[str]:
+    def webhook_secret(self) -> str | None:
         """Webhook secret for validating Cloudflare webhooks."""
         return self._settings.get('WEBHOOK_SECRET')
 

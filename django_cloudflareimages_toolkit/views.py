@@ -7,31 +7,30 @@ transformations, and management operations.
 
 import json
 import logging
-from typing import Dict, Any, Optional
+
 from django.http import HttpRequest, HttpResponse
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
-from django.db.models import Q
-from rest_framework import status, permissions
+from rest_framework import permissions, status
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.request import Request
 from rest_framework.response import Response
-from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
-from rest_framework.pagination import PageNumberPagination
+from rest_framework.viewsets import ModelViewSet
 
-from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
+from .models import CloudflareImage, ImageUploadStatus
 from .serializers import (
-    ImageUploadRequestSerializer,
+    BulkImageStatusSerializer,
     CloudflareImageSerializer,
-    ImageUploadResponseSerializer,
+    ImageFilterSerializer,
     ImageStatusSerializer,
     ImageUploadLogSerializer,
+    ImageUploadRequestSerializer,
+    ImageUploadResponseSerializer,
     WebhookPayloadSerializer,
-    BulkImageStatusSerializer,
-    ImageFilterSerializer
 )
-from .services import cloudflare_service, CloudflareImagesError
+from .services import CloudflareImagesError, cloudflare_service
 from .settings import cloudflare_settings
 
 logger = logging.getLogger(__name__)
@@ -90,7 +89,7 @@ class CloudflareImageViewSet(ModelViewSet):
         image = self.get_object()
 
         try:
-            result = cloudflare_service.check_image_status(image)
+            cloudflare_service.check_image_status(image)
             serializer = ImageStatusSerializer(data={
                 'id': image.id,
                 'cloudflare_id': image.cloudflare_id,
@@ -228,7 +227,7 @@ class WebhookView(APIView):
                 if not cloudflare_service.validate_webhook_signature(
                     request.body, signature
                 ):
-                    logger.warning(f"Invalid webhook signature received")
+                    logger.warning("Invalid webhook signature received")
                     return HttpResponse(
                         'Invalid signature',
                         status=status.HTTP_401_UNAUTHORIZED

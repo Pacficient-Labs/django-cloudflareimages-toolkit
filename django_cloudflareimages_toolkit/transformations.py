@@ -1,13 +1,12 @@
 """
 Image transformation utilities for Cloudflare Images Toolkit.
 
-This module provides comprehensive utilities for working with Cloudflare Images 
+This module provides comprehensive utilities for working with Cloudflare Images
 transformations, variants, and delivery options.
 """
 
-from typing import Dict, Any, Optional, List, Union
-from urllib.parse import urlencode
 import re
+from typing import Any
 
 
 class CloudflareImageTransform:
@@ -16,7 +15,7 @@ class CloudflareImageTransform:
     def __init__(self, base_url: str):
         """Initialize with base image URL."""
         self.base_url = base_url.rstrip('/')
-        self.transforms: Dict[str, Any] = {}
+        self.transforms: dict[str, Any] = {}
 
     def width(self, width: int) -> 'CloudflareImageTransform':
         """Set image width."""
@@ -117,7 +116,7 @@ class CloudflareImageTransform:
             self.transforms['rotate'] = degrees
         return self
 
-    def trim(self, color: Optional[str] = None, tolerance: Optional[float] = None) -> 'CloudflareImageTransform':
+    def trim(self, color: str | None = None, tolerance: float | None = None) -> 'CloudflareImageTransform':
         """Enable automatic trimming of transparent/solid borders."""
         trim_params = []
         if color:
@@ -151,7 +150,7 @@ class CloudflareImageTransform:
         self.transforms['border'] = f"{width},{color.lstrip('#')}"
         return self
 
-    def pad(self, padding: Union[int, str]) -> 'CloudflareImageTransform':
+    def pad(self, padding: int | str) -> 'CloudflareImageTransform':
         """Add padding around the image."""
         if isinstance(padding, int):
             if padding < 0 or padding > 500:
@@ -275,7 +274,7 @@ class CloudflareImageUtils:
     """Utility functions for Cloudflare Images."""
 
     @staticmethod
-    def extract_image_id(url: str) -> Optional[str]:
+    def extract_image_id(url: str) -> str | None:
         """Extract image ID from Cloudflare Images URL."""
         # Pattern: https://imagedelivery.net/{account_hash}/{image_id}/{variant}
         pattern = r'https://imagedelivery\.net/[^/]+/([^/]+)(?:/[^/]+)?'
@@ -288,7 +287,7 @@ class CloudflareImageUtils:
         return 'imagedelivery.net' in url
 
     @staticmethod
-    def get_srcset(base_url: str, widths: List[int], quality: int = 85) -> str:
+    def get_srcset(base_url: str, widths: list[int], quality: int = 85) -> str:
         """Generate srcset attribute for responsive images."""
         srcset_parts = []
         for width in widths:
@@ -302,7 +301,7 @@ class CloudflareImageUtils:
         return ', '.join(srcset_parts)
 
     @staticmethod
-    def get_sizes_attribute(breakpoints: Dict[str, int]) -> str:
+    def get_sizes_attribute(breakpoints: dict[str, int]) -> str:
         """Generate sizes attribute for responsive images."""
         sizes_parts = []
         for media_query, width in breakpoints.items():

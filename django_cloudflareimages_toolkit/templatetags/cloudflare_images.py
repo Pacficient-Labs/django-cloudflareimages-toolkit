@@ -5,16 +5,15 @@ This module provides Django template tags for easy integration of
 Cloudflare Images transformations and utilities in templates.
 """
 
-from django import template
-from django.utils.safestring import mark_safe
-from typing import Dict, List, Optional, Union
 
+from django import template
+
+from ..models import CloudflareImage
 from ..transformations import (
     CloudflareImageTransform,
+    CloudflareImageUtils,
     CloudflareImageVariants,
-    CloudflareImageUtils
 )
-from ..models import CloudflareImage
 
 register = template.Library()
 
@@ -201,7 +200,7 @@ def cf_sizes(breakpoints: str) -> str:
 @register.inclusion_tag('cloudflare_images/responsive_image.html')
 def cf_responsive_img(image_url: str, alt: str = '', css_class: str = '',
                       widths: str = "320,640,1024", quality: int = 85,
-                      sizes: str = "100vw") -> Dict:
+                      sizes: str = "100vw") -> dict:
     """
     Render a complete responsive image element.
 
@@ -229,7 +228,7 @@ def cf_responsive_img(image_url: str, alt: str = '', css_class: str = '',
 @register.inclusion_tag('cloudflare_images/picture_element.html')
 def cf_picture(image_url: str, alt: str = '', css_class: str = '',
                mobile_width: int = 400, tablet_width: int = 768,
-               desktop_width: int = 1200) -> Dict:
+               desktop_width: int = 1200) -> dict:
     """
     Render a picture element with different sources for different screen sizes.
 
@@ -293,7 +292,7 @@ def cf_validate_url(url: str) -> bool:
 
 
 @register.simple_tag
-def cf_image_info(image_id: Union[str, CloudflareImage]) -> Optional[CloudflareImage]:
+def cf_image_info(image_id: str | CloudflareImage) -> CloudflareImage | None:
     """
     Get CloudflareImage instance by ID or return the instance if already provided.
 
@@ -317,7 +316,7 @@ def cf_image_info(image_id: Union[str, CloudflareImage]) -> Optional[CloudflareI
 def cf_upload_form(form_id: str = 'cf-upload-form',
                    css_class: str = 'cf-upload-form',
                    button_text: str = 'Upload Image',
-                   api_endpoint: str = '/api/cloudflare-images/upload-url/') -> Dict:
+                   api_endpoint: str = '/api/cloudflare-images/upload-url/') -> dict:
     """
     Render an image upload form with JavaScript integration.
 
@@ -351,7 +350,7 @@ def cf_upload_url(context, **kwargs) -> str:
 
 
 @register.inclusion_tag('cloudflare_images/image_gallery.html')
-def cf_image_gallery(images, columns: int = 3, thumbnail_size: int = 300) -> Dict:
+def cf_image_gallery(images, columns: int = 3, thumbnail_size: int = 300) -> dict:
     """
     Render an image gallery with Cloudflare Images.
 
