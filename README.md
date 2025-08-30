@@ -410,7 +410,7 @@ Tracks events and changes for debugging:
 
 ```bash
 # Clone the repository
-git clone https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit.git
+git clone https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit.git
 cd django-cloudflareimages-toolkit
 
 # Install dependencies

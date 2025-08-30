@@ -91,10 +91,10 @@ Use in templates:
 ## Links
 
 - **PyPI**: https://pypi.org/project/django-cloudflareimages-toolkit/
-- **GitHub**: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit
+- **GitHub**: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit
 - **Documentation**: https://django-cloudflareimages-toolkit.readthedocs.io/
-- **Issues**: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/issues
-- **Discussions**: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/discussions
+- **Issues**: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/issues
+- **Discussions**: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/discussions
 
 ## Project Structure
 

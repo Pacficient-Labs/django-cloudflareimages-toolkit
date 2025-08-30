@@ -504,7 +504,7 @@ The package includes comprehensive CI/CD testing:
 ### Local Development
 ```bash
 # Clone the repository
-git clone https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit.git
+git clone https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit.git
 cd django-cloudflareimages-toolkit
 
 # Install dependencies
@@ -835,10 +835,10 @@ MIT License - see LICENSE file for details.
 ## Support and Community
 
 - **Documentation**: https://django-cloudflareimages-toolkit.readthedocs.io/
-- **Issues**: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/issues
-- **Discussions**: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/discussions
+- **Issues**: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/issues
+- **Discussions**: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/discussions
 - **PyPI**: https://pypi.org/project/django-cloudflareimages-toolkit/
-- **GitHub**: https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit
+- **GitHub**: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit
 
 ## Requirements
 

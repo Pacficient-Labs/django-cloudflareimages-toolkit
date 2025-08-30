@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "django-cloudflareimages-toolkit"
-version = "1.0.2"
+version = "1.0.3"
 description = "Comprehensive Django toolkit for Cloudflare Images with direct creator upload, transformations, and management"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -66,10 +66,10 @@ test = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit"
+Homepage = "https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit"
 Documentation = "https://django-cloudflareimages-toolkit.readthedocs.io/"
-Repository = "https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit.git"
-Issues = "https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/issues"
+Repository = "https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit.git"
+Issues = "https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["django_cloudflareimages_toolkit"]
