@@ -292,3 +292,4 @@ secrets.json
 .secrets
 PACKAGE_SUMMARY.md
 WEBHOOK_SETUP.md
+.snapshots
