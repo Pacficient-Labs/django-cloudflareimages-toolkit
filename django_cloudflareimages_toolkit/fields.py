@@ -12,7 +12,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from .models import CloudflareImage
+from .models import CloudflareImage, ImageUploadStatus
 from .services import cloudflare_service
 from .widgets import CloudflareImageWidget
 
@@ -210,6 +210,9 @@ class CloudflareImageFieldValue:
                 )
             except CloudflareImage.DoesNotExist:
                 pass
+            except Exception:
+                # Handle database errors (table doesn't exist, connection issues, etc.)
+                pass
         return self._cloudflare_image
 
     def get_url(self, variant: str = "public") -> str | None:
@@ -229,14 +232,12 @@ class CloudflareImageFieldValue:
         if self.cloudflare_image:
             return self.cloudflare_image.public_url
 
-        # Fallback to generating URL from service
+        # Fallback to generating URL from settings
         try:
             from .settings import cloudflare_settings
 
-            account_id = cloudflare_settings.account_id
-
-            if account_id:
-                return f"https://imagedelivery.net/{account_id}/{self.cloudflare_id}/{variant}"
+            account_hash = cloudflare_settings.account_hash
+            return f"https://imagedelivery.net/{account_hash}/{self.cloudflare_id}/{variant}"
         except Exception:
             pass
 
@@ -348,5 +349,5 @@ class CloudflareImageFieldValue:
     def is_ready(self) -> bool:
         """Check if image processing is complete."""
         if self.cloudflare_image:
-            return self.cloudflare_image.status == "uploaded"
+            return self.cloudflare_image.status == ImageUploadStatus.UPLOADED
         return False

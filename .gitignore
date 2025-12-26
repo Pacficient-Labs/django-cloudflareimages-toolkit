@@ -293,3 +293,6 @@ secrets.json
 PACKAGE_SUMMARY.md
 WEBHOOK_SETUP.md
 .snapshots
+
+# AI Assistant files
+CLAUDE.md

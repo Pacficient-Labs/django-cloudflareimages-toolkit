@@ -53,14 +53,17 @@ INSTALLED_APPS = [
 
 # Cloudflare Images Configuration
 CLOUDFLARE_IMAGES = {
-    'ACCOUNT_ID': 'your-cloudflare-account-id',
+    'ACCOUNT_ID': 'your-cloudflare-account-id',      # For API calls
+    'ACCOUNT_HASH': 'your-cloudflare-account-hash',  # For delivery URLs (different from ID!)
     'API_TOKEN': 'your-cloudflare-api-token',
     'BASE_URL': 'https://api.cloudflare.com/client/v4',  # Optional
-    'DEFAULT_EXPIRY_MINUTES': 30,  # Optional
+    'DEFAULT_EXPIRY_MINUTES': 30,  # Optional (2-360 minutes)
     'REQUIRE_SIGNED_URLS': True,  # Optional
     'WEBHOOK_SECRET': 'your-webhook-secret',  # Optional
     'MAX_FILE_SIZE_MB': 10,  # Optional
 }
+# Note: ACCOUNT_HASH is found in Cloudflare Images dashboard under "Developer Resources"
+# or from any image delivery URL: https://imagedelivery.net/<ACCOUNT_HASH>/...
 
 # REST Framework (if not already configured)
 REST_FRAMEWORK = {
@@ -229,7 +232,7 @@ print(f"Expires at: {image.expires_at}")
 ```python
 from django_cloudflareimages_toolkit.transformations import CloudflareImageTransform
 
-# Build transformation URL
+# Cloudflare Images (imagedelivery.net) - uses flexible variants
 transform = CloudflareImageTransform(image.public_url)
 thumbnail_url = (transform
     .width(300)
@@ -237,12 +240,20 @@ thumbnail_url = (transform
     .fit('cover')
     .quality(85)
     .build())
+# Result: https://imagedelivery.net/<hash>/<id>/width=300,height=300,fit=cover,quality=85
+
+# Cloudflare Image Resizing (custom domains) - uses /cdn-cgi/image/ format
+transform = CloudflareImageTransform("/images/photo.jpg", zone="example.com")
+resized_url = transform.width(800).quality(85).build()
+# Result: https://example.com/cdn-cgi/image/width=800,quality=85/images/photo.jpg
 
 # Use predefined variants
 from django_cloudflareimages_toolkit.transformations import CloudflareImageVariants
 
 avatar_url = CloudflareImageVariants.avatar(image.public_url, 100)
 hero_url = CloudflareImageVariants.hero_image(image.public_url, 1920, 800)
+thumbnail_url = CloudflareImageVariants.thumbnail(image.public_url, 150)
+product_url = CloudflareImageVariants.product_image(image.public_url, 400)
 ```
 
 #### Checking Image Status
@@ -373,10 +384,11 @@ for image in images:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `ACCOUNT_ID` | Required | Your Cloudflare Account ID |
+| `ACCOUNT_ID` | Required | Your Cloudflare Account ID (for API calls) |
+| `ACCOUNT_HASH` | Required | Your Cloudflare Account Hash (for delivery URLs - find in Images dashboard) |
 | `API_TOKEN` | Required | Cloudflare API Token with Images permissions |
 | `BASE_URL` | `https://api.cloudflare.com/client/v4` | Cloudflare API base URL |
-| `DEFAULT_EXPIRY_MINUTES` | `30` | Default expiry time for upload URLs |
+| `DEFAULT_EXPIRY_MINUTES` | `30` | Default expiry time for upload URLs (2-360 minutes) |
 | `REQUIRE_SIGNED_URLS` | `True` | Require signed URLs by default |
 | `WEBHOOK_SECRET` | `None` | Secret for webhook signature validation |
 | `MAX_FILE_SIZE_MB` | `10` | Maximum file size in MB |
@@ -433,14 +445,18 @@ uv run mypy django_cloudflareimages_toolkit
 ### Running Tests
 
 ```bash
-# Run all tests
-uv run pytest
+# Run all tests (use venv Python directly for reliability)
+.venv/bin/python -m pytest
 
 # Run with coverage
-uv run pytest --cov=django_cloudflareimages_toolkit
+.venv/bin/python -m pytest --cov=django_cloudflareimages_toolkit
 
 # Run specific test file
-uv run pytest tests/test_services.py
+.venv/bin/python -m pytest tests/test_imports.py
+
+# Alternative: use uv run (ensure venv is synced first)
+uv sync --extra dev
+uv run pytest
 ```
 
 ## Contributing
@@ -466,6 +482,17 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Discussions: [https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/discussions](https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/discussions)
 
 ## Changelog
+
+### v1.0.9
+
+- **Fixed**: Transformation URLs now use correct Cloudflare format (`width=300,height=200` path-based)
+- **Fixed**: Added missing `expiry` parameter to direct upload API requests
+- **Fixed**: `per_page` max increased to 10000 (was incorrectly 100)
+- **Added**: `ACCOUNT_HASH` setting (separate from `ACCOUNT_ID` for delivery URLs)
+- **Fixed**: Enum comparison for `ImageUploadStatus` (was comparing string to enum)
+- **Added**: `get_variant_url()` method on `CloudflareImage` model
+- **Fixed**: Double-slash bug in cdn-cgi URLs for Image Resizing
+- **Fixed**: Lazy imports to prevent import-time Django dependency errors
 
 ### v1.0.0
 

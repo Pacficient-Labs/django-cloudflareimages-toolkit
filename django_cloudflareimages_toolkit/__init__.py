@@ -5,7 +5,7 @@ A comprehensive Django toolkit that provides secure image upload functionality,
 transformations, and management using Cloudflare Images.
 """
 
-__version__ = "1.0.8"
+__version__ = "1.0.9"
 __author__ = "PacNPal"
 
 # Always import transformation utilities (Django-independent)
@@ -15,60 +15,54 @@ from .transformations import (
     CloudflareImageVariants,
 )
 
-# Try to import Django-dependent components
-try:
-    from .exceptions import (
-        CloudflareImagesAPIError,
-        CloudflareImagesError,
-        ConfigurationError,
-        ImageNotFoundError,
-        UploadError,
-        ValidationError,
-    )
-    from .fields import CloudflareImageField
-    from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
-    from .services import cloudflare_service
-    from .widgets import CloudflareImageWidget
 
-    _django_available = True
-except (ImportError, Exception):
-    # Django not configured or not available
-    _django_available = False
-    CloudflareImage = None
-    ImageUploadLog = None
-    ImageUploadStatus = None
-    cloudflare_service = None
-    CloudflareImageField = None
-    CloudflareImageWidget = None
-    CloudflareImagesError = None
-    CloudflareImagesAPIError = None
-    ConfigurationError = None
-    ValidationError = None
-    UploadError = None
-    ImageNotFoundError = None
+def __getattr__(name):
+    """
+    Lazy import of Django-dependent components.
+
+    This allows the package to be imported before Django is configured,
+    and only loads Django components when they're actually accessed.
+    """
+    django_components = {
+        "CloudflareImage": (".models", "CloudflareImage"),
+        "ImageUploadLog": (".models", "ImageUploadLog"),
+        "ImageUploadStatus": (".models", "ImageUploadStatus"),
+        "cloudflare_service": (".services", "cloudflare_service"),
+        "CloudflareImageField": (".fields", "CloudflareImageField"),
+        "CloudflareImageWidget": (".widgets", "CloudflareImageWidget"),
+        "CloudflareImagesError": (".exceptions", "CloudflareImagesError"),
+        "CloudflareImagesAPIError": (".exceptions", "CloudflareImagesAPIError"),
+        "ConfigurationError": (".exceptions", "ConfigurationError"),
+        "ValidationError": (".exceptions", "ValidationError"),
+        "UploadError": (".exceptions", "UploadError"),
+        "ImageNotFoundError": (".exceptions", "ImageNotFoundError"),
+    }
+
+    if name in django_components:
+        module_name, attr_name = django_components[name]
+        from importlib import import_module
+
+        module = import_module(module_name, package=__name__)
+        return getattr(module, attr_name)
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Define what gets imported with "from django_cloudflareimages_toolkit import *"
 __all__ = [
     "CloudflareImageTransform",
     "CloudflareImageVariants",
     "CloudflareImageUtils",
+    "CloudflareImage",
+    "ImageUploadLog",
+    "ImageUploadStatus",
+    "cloudflare_service",
+    "CloudflareImageField",
+    "CloudflareImageWidget",
+    "CloudflareImagesError",
+    "CloudflareImagesAPIError",
+    "ConfigurationError",
+    "ValidationError",
+    "UploadError",
+    "ImageNotFoundError",
 ]
-
-# Add Django components if available
-if _django_available:
-    __all__.extend(
-        [
-            "CloudflareImage",
-            "ImageUploadLog",
-            "ImageUploadStatus",
-            "cloudflare_service",
-            "CloudflareImageField",
-            "CloudflareImageWidget",
-            "CloudflareImagesError",
-            "CloudflareImagesAPIError",
-            "ConfigurationError",
-            "ValidationError",
-            "UploadError",
-            "ImageNotFoundError",
-        ]
-    )

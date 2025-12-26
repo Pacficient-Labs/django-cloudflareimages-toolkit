@@ -16,11 +16,28 @@ class CloudflareImagesSettings:
 
     @property
     def account_id(self) -> str:
-        """Cloudflare Account ID."""
+        """Cloudflare Account ID (used for API calls)."""
         account_id = self._settings.get("ACCOUNT_ID")
         if not account_id:
             raise ValueError("CLOUDFLARE_IMAGES['ACCOUNT_ID'] is required")
         return account_id
+
+    @property
+    def account_hash(self) -> str:
+        """
+        Cloudflare Account Hash (used for image delivery URLs).
+
+        This is different from account_id. Find it in your Cloudflare Images
+        dashboard under "Developer Resources" or from any image delivery URL.
+        Format: https://imagedelivery.net/<ACCOUNT_HASH>/<IMAGE_ID>/<VARIANT>
+        """
+        account_hash = self._settings.get("ACCOUNT_HASH")
+        if not account_hash:
+            raise ValueError(
+                "CLOUDFLARE_IMAGES['ACCOUNT_HASH'] is required for image delivery URLs. "
+                "Find it in your Cloudflare Images dashboard under Developer Resources."
+            )
+        return account_hash
 
     @property
     def api_token(self) -> str:

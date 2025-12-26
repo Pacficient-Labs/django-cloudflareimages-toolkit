@@ -93,13 +93,15 @@ class CloudflareImagesService:
         if metadata is None:
             metadata = {}
 
-        # Calculate expiry time
+        # Calculate expiry time (must be 2 min to 6 hours in the future per API docs)
+        expiry_minutes = max(2, min(expiry_minutes, 360))
         expires_at = timezone.now() + timedelta(minutes=expiry_minutes)
 
         # Prepare request data
         form_data = {
             "requireSignedURLs": str(require_signed_urls).lower(),
             "metadata": json.dumps(metadata),
+            "expiry": expires_at.isoformat(),
         }
 
         if custom_id:
@@ -213,13 +215,13 @@ class CloudflareImagesService:
                 f"Failed to check image status: {str(e)}"
             ) from e
 
-    def list_images(self, page: int = 1, per_page: int = 50) -> dict[str, Any]:
+    def list_images(self, page: int = 1, per_page: int = 1000) -> dict[str, Any]:
         """
         List images from Cloudflare Images.
 
         Args:
             page: Page number for pagination (default: 1)
-            per_page: Number of images per page (default: 50, max: 100)
+            per_page: Number of images per page (default: 1000, max: 10000)
 
         Returns:
             Dictionary with pagination info and list of images
@@ -230,7 +232,7 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1"
         params = {
             "page": page,
-            "per_page": min(per_page, 100),  # Cloudflare max is 100
+            "per_page": min(per_page, 10000),  # Cloudflare max is 10000
         }
 
         try:

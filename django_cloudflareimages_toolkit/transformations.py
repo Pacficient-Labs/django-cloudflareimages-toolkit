@@ -10,25 +10,49 @@ from typing import Any
 
 
 class CloudflareImageTransform:
-    """Builder class for Cloudflare Images transformations."""
+    """
+    Builder class for Cloudflare image transformations.
 
-    def __init__(self, base_url: str):
-        """Initialize with base image URL."""
+    Supports two URL formats:
+    1. Cloudflare Images (imagedelivery.net) with flexible variants
+    2. Cloudflare Image Resizing (/cdn-cgi/image/) for images on your domain
+
+    Example usage:
+        # For Cloudflare Images (flexible variants)
+        transform = CloudflareImageTransform(base_url)
+        url = transform.width(300).height(200).quality(85).build()
+
+        # For Image Resizing on custom domain
+        transform = CloudflareImageTransform(image_path, zone="example.com")
+        url = transform.width(300).build()
+    """
+
+    def __init__(self, base_url: str, zone: str | None = None):
+        """
+        Initialize with base image URL.
+
+        Args:
+            base_url: The base image URL or path
+            zone: Optional zone/domain for Image Resizing (cdn-cgi format).
+                  If not provided, assumes Cloudflare Images (imagedelivery.net).
+        """
         self.base_url = base_url.rstrip("/")
+        self.zone = zone
         self.transforms: dict[str, Any] = {}
+        self._is_imagedelivery = "imagedelivery.net" in base_url
 
     def width(self, width: int) -> "CloudflareImageTransform":
         """Set image width."""
         if width <= 0 or width > 12000:
             raise ValueError("Width must be between 1 and 12000 pixels")
-        self.transforms["w"] = width
+        self.transforms["width"] = width
         return self
 
     def height(self, height: int) -> "CloudflareImageTransform":
         """Set image height."""
         if height <= 0 or height > 12000:
             raise ValueError("Height must be between 1 and 12000 pixels")
-        self.transforms["h"] = height
+        self.transforms["height"] = height
         return self
 
     def fit(self, fit_mode: str) -> "CloudflareImageTransform":
@@ -53,15 +77,15 @@ class CloudflareImageTransform:
         """Set image quality (1-100)."""
         if quality < 1 or quality > 100:
             raise ValueError("Quality must be between 1 and 100")
-        self.transforms["q"] = quality
+        self.transforms["quality"] = quality
         return self
 
     def format(self, format_type: str) -> "CloudflareImageTransform":
-        """Set output format: auto, webp, avif, json."""
-        valid_formats = ["auto", "webp", "avif", "json"]
+        """Set output format: auto, webp, avif, jpeg, json."""
+        valid_formats = ["auto", "webp", "avif", "jpeg", "json"]
         if format_type not in valid_formats:
             raise ValueError(f"Format must be one of: {', '.join(valid_formats)}")
-        self.transforms["f"] = format_type
+        self.transforms["format"] = format_type
         return self
 
     def dpr(self, device_pixel_ratio: float) -> "CloudflareImageTransform":
@@ -145,7 +169,7 @@ class CloudflareImageTransform:
             raise ValueError("Border width must be between 1 and 100 pixels")
         if not re.match(r"^#?[0-9a-fA-F]{6}$", color):
             raise ValueError("Border color must be a valid hex color")
-        self.transforms["border"] = f"{width},{color.lstrip('#')}"
+        self.transforms["border"] = f"{width};{color.lstrip('#')}"
         return self
 
     def pad(self, padding: int | str) -> "CloudflareImageTransform":
@@ -169,21 +193,54 @@ class CloudflareImageTransform:
             raise ValueError("Crop values must be non-negative")
         if width == 0 or height == 0:
             raise ValueError("Crop width and height must be greater than 0")
-        self.transforms["crop"] = f"{x},{y},{width},{height}"
+        self.transforms["crop"] = f"{x};{y};{width};{height}"
         return self
 
+    def _build_options_string(self) -> str:
+        """Build comma-separated options string for Cloudflare URLs."""
+        if not self.transforms:
+            return ""
+        return ",".join(f"{key}={value}" for key, value in self.transforms.items())
+
     def build(self) -> str:
-        """Build the final transformed URL."""
+        """
+        Build the final transformed URL.
+
+        Returns the appropriate URL format based on the base URL:
+        - For imagedelivery.net: Uses flexible variant format
+        - For custom domains with zone: Uses /cdn-cgi/image/ format
+        - For custom domains without zone: Uses /cdn-cgi/image/ format inline
+        """
         if not self.transforms:
             return self.base_url
 
-        # Build query string
-        query_params = []
-        for key, value in self.transforms.items():
-            query_params.append(f"{key}={value}")
+        options = self._build_options_string()
 
-        query_string = "&".join(query_params)
-        return f"{self.base_url}?{query_string}"
+        if self._is_imagedelivery:
+            # Cloudflare Images flexible variant format
+            # URL: https://imagedelivery.net/<hash>/<id>/<options>
+            # Replace the variant name (last path segment) with options
+            parts = self.base_url.rsplit("/", 1)
+            if len(parts) == 2:
+                return f"{parts[0]}/{options}"
+            return f"{self.base_url}/{options}"
+
+        if self.zone:
+            # Image Resizing with explicit zone
+            # URL: https://<zone>/cdn-cgi/image/<options>/<image-path>
+            image_path = self.base_url.lstrip("/")
+            return f"https://{self.zone}/cdn-cgi/image/{options}/{image_path}"
+
+        # Image Resizing inline format (assumes base_url is full URL)
+        # URL: https://example.com/cdn-cgi/image/<options>/path/to/image.jpg
+        if self.base_url.startswith("http"):
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self.base_url)
+            return f"{parsed.scheme}://{parsed.netloc}/cdn-cgi/image/{options}{parsed.path}"
+
+        # Relative path - return with cdn-cgi prefix
+        return f"/cdn-cgi/image/{options}/{self.base_url.lstrip('/')}"
 
     def __str__(self) -> str:
         """Return the built URL."""

@@ -96,20 +96,43 @@ class CloudflareImage(models.Model):
 
     @property
     def public_url(self) -> str | None:
-        """Get the public URL for the uploaded image."""
-        if self.variants and isinstance(self.variants, list):
-            for variant in self.variants:
-                if "public" in variant:
-                    return variant
-        return None
+        """Get the public variant URL for the uploaded image."""
+        return self.get_variant_url("public")
 
     @property
     def thumbnail_url(self) -> str | None:
-        """Get the thumbnail URL for the uploaded image."""
-        if self.variants and isinstance(self.variants, list):
-            for variant in self.variants:
-                if "thumbnail" in variant:
-                    return variant
+        """Get the thumbnail variant URL for the uploaded image."""
+        return self.get_variant_url("thumbnail")
+
+    def get_variant_url(self, variant_name: str) -> str | None:
+        """
+        Get the URL for a specific variant by name.
+
+        Cloudflare returns variants as full URLs like:
+        https://imagedelivery.net/<hash>/<id>/<variant_name>
+
+        Args:
+            variant_name: The variant name to look for (e.g., 'public', 'thumbnail')
+
+        Returns:
+            The full variant URL if found, None otherwise
+        """
+        if not self.variants:
+            return None
+
+        if isinstance(self.variants, list):
+            # Variants are full URLs - find one ending with the variant name
+            for variant_url in self.variants:
+                if variant_url.rstrip("/").endswith(f"/{variant_name}"):
+                    return variant_url
+            # Fallback: check if variant name appears anywhere in URL
+            for variant_url in self.variants:
+                if variant_name in variant_url:
+                    return variant_url
+        elif isinstance(self.variants, dict):
+            # Handle dict format if Cloudflare ever returns that
+            return self.variants.get(variant_name)
+
         return None
 
     @property
@@ -127,19 +150,9 @@ class CloudflareImage(models.Model):
         Returns:
             The URL for the specified variant, or None if not found
         """
-        if not self.is_uploaded or not self.variants:
+        if not self.is_uploaded:
             return None
-
-        if isinstance(self.variants, list):
-            # Handle list format variants
-            for variant_url in self.variants:
-                if variant in variant_url:
-                    return variant_url
-        elif isinstance(self.variants, dict):
-            # Handle dict format variants
-            return self.variants.get(variant)
-
-        return None
+        return self.get_variant_url(variant)
 
     def get_signed_url(self, variant: str = "public", expiry: int = 3600) -> str | None:
         """
