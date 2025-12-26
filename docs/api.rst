@@ -50,7 +50,7 @@ list_images Method
 **Parameters:**
 
 * ``page`` (int, optional): Page number for pagination (default: 1)
-* ``per_page`` (int, optional): Number of images per page (default: 50, max: 100)
+* ``per_page`` (int, optional): Number of images per page (default: 1000, max: 10000)
 
 **Returns:** dict with pagination info and list of images
 
@@ -166,6 +166,34 @@ get_url Method
    image = CloudflareImage.objects.get(cloudflare_id='your-id')
    original_url = image.get_url()
    thumbnail_url = image.get_url('thumbnail')
+
+get_variant_url Method
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. automethod:: django_cloudflareimages_toolkit.models.CloudflareImage.get_variant_url
+
+**Parameters:**
+
+* ``variant_name`` (str, required): Name of the variant to retrieve
+
+**Returns:** str or None - Full variant URL if found, None otherwise
+
+Retrieves a specific variant URL from the image's variants list. This method
+searches through the stored variants (which may be a list of URLs or a dict)
+to find and return the URL matching the requested variant name.
+
+**Example:**
+
+.. code-block:: python
+
+   image = CloudflareImage.objects.get(cloudflare_id='your-id')
+
+   # Get specific variant URLs
+   public_url = image.get_variant_url('public')
+   thumbnail_url = image.get_variant_url('thumbnail')
+
+   # Returns None if variant doesn't exist
+   custom_url = image.get_variant_url('nonexistent')  # None
 
 get_signed_url Method
 ~~~~~~~~~~~~~~~~~~~~~

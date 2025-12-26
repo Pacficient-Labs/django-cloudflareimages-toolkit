@@ -227,6 +227,128 @@ Form Template
    });
    </script>
 
+Image Transformations
+---------------------
+
+The toolkit provides powerful image transformation capabilities using Cloudflare's
+flexible variants and Image Resizing features.
+
+CloudflareImageTransform
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use ``CloudflareImageTransform`` to build transformation URLs:
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit.transformations import CloudflareImageTransform
+
+   # For Cloudflare Images (imagedelivery.net)
+   # Transforms are applied as path-based options: width=300,height=200
+   transform = CloudflareImageTransform(image.public_url)
+   thumbnail_url = (transform
+       .width(300)
+       .height(300)
+       .fit('cover')
+       .quality(85)
+       .build())
+   # Result: https://imagedelivery.net/<hash>/<id>/width=300,height=300,fit=cover,quality=85
+
+   # For Image Resizing on custom domains (cdn-cgi format)
+   transform = CloudflareImageTransform("/images/photo.jpg", zone="example.com")
+   resized_url = transform.width(800).quality(85).build()
+   # Result: https://example.com/cdn-cgi/image/width=800,quality=85/images/photo.jpg
+
+Available Transformations
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   transform = CloudflareImageTransform(base_url)
+
+   # Dimensions
+   transform.width(800)          # Width in pixels (1-12000)
+   transform.height(600)         # Height in pixels (1-12000)
+
+   # Fit modes
+   transform.fit('scale-down')   # Scale down only, never enlarge
+   transform.fit('contain')      # Fit within dimensions, preserve aspect ratio
+   transform.fit('cover')        # Fill dimensions, crop if needed
+   transform.fit('crop')         # Crop to exact dimensions
+   transform.fit('pad')          # Pad to dimensions with background
+
+   # Quality and format
+   transform.quality(85)         # Quality 1-100
+   transform.format('webp')      # Output format: auto, webp, avif, jpeg, json
+
+   # Visual adjustments
+   transform.blur(10)            # Blur amount 1-250
+   transform.sharpen(2.0)        # Sharpen 0.0-10.0
+   transform.brightness(0.1)     # Brightness -1.0 to 1.0
+   transform.contrast(0.1)       # Contrast -1.0 to 1.0
+   transform.gamma(1.2)          # Gamma 0.1-9.9
+
+   # Cropping and positioning
+   transform.gravity('auto')     # auto, left, right, top, bottom, center
+   transform.rotate(90)          # Rotation: 0, 90, 180, 270
+
+   # Borders and background
+   transform.background('ffffff')  # Background color (hex)
+   transform.border(2, 'cccccc')   # Border width and color
+
+   # Device pixel ratio
+   transform.dpr(2.0)            # DPR 1.0-3.0 for retina displays
+
+Predefined Variants
+~~~~~~~~~~~~~~~~~~~
+
+Use ``CloudflareImageVariants`` for common use cases:
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit.transformations import CloudflareImageVariants
+
+   # Square thumbnail
+   thumbnail = CloudflareImageVariants.thumbnail(image.public_url, 150)
+
+   # Circular avatar (requires CSS border-radius)
+   avatar = CloudflareImageVariants.avatar(image.public_url, 100)
+
+   # Hero/banner image
+   hero = CloudflareImageVariants.hero_image(image.public_url, 1920, 800)
+
+   # Responsive image
+   responsive = CloudflareImageVariants.responsive_image(image.public_url, 800)
+
+   # Product image with white background
+   product = CloudflareImageVariants.product_image(image.public_url, 400)
+
+   # Mobile-optimized WebP
+   mobile = CloudflareImageVariants.mobile_optimized(image.public_url, 400)
+
+Responsive Images
+~~~~~~~~~~~~~~~~~
+
+Generate srcset for responsive images:
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit.transformations import CloudflareImageUtils
+
+   # Generate srcset attribute
+   srcset = CloudflareImageUtils.get_srcset(
+       image.public_url,
+       widths=[320, 640, 1024, 1920],
+       quality=85
+   )
+   # Result: "url 320w, url 640w, url 1024w, url 1920w"
+
+   # Generate sizes attribute
+   sizes = CloudflareImageUtils.get_sizes_attribute({
+       'max-width: 768px': 100,   # 100vw on mobile
+       'max-width: 1024px': 50,   # 50vw on tablet
+       'default': 800             # 800px on desktop
+   })
+
 Template Usage
 --------------
 
