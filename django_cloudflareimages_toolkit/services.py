@@ -44,20 +44,24 @@ class CloudflareImagesService:
 
     @property
     def session(self) -> requests.Session:
-        # Read token first: if it raises (missing settings), _session stays None
-        # so the next access will retry rather than returning a half-initialised session.
-        api_token = self.api_token
+        # Session holds no auth headers; credentials are passed per-request via
+        # _auth_headers() so that override_settings changes are reflected
+        # immediately and there is no shared mutable header state across threads.
+        # Credential validation happens on the first API call when _auth_headers()
+        # reads api_token.
         if self._session is None:
             with self._session_lock:
                 if self._session is None:
-                    new_session = requests.Session()
-                    new_session.headers["Authorization"] = f"Bearer {api_token}"
-                    self._session = new_session
-        else:
-            # Keep the Authorization header in sync with the current token so
-            # that override_settings changes are reflected on subsequent calls.
-            self._session.headers["Authorization"] = f"Bearer {api_token}"
+                    self._session = requests.Session()
         return self._session
+
+    def _auth_headers(self) -> dict:
+        """Return per-request Authorization headers using the current API token.
+
+        Reading the token on each call keeps the header in sync with
+        override_settings changes and avoids mutating shared session state.
+        """
+        return {"Authorization": f"Bearer {self.api_token}"}
 
     def get_direct_upload_url(
         self,
@@ -133,9 +137,11 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v2/direct_upload"
 
         try:
-            # This endpoint requires multipart/form-data; using files= lets
-            # requests set the correct Content-Type boundary automatically.
-            response = self.session.post(url, files=form_data)
+            # This endpoint requires multipart/form-data. Using (None, value) tuples
+            # encodes each field as a plain form field (no filename) so the request
+            # matches Cloudflare's expected -F key=value semantics.
+            files = {k: (None, v) for k, v in form_data.items()}
+            response = self.session.post(url, files=files, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
@@ -193,7 +199,7 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image.cloudflare_id}"
 
         try:
-            response = self.session.get(url)
+            response = self.session.get(url, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
@@ -254,7 +260,7 @@ class CloudflareImagesService:
         }
 
         try:
-            response = self.session.get(url, params=params)
+            response = self.session.get(url, params=params, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
@@ -291,7 +297,7 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image_id}"
 
         try:
-            response = self.session.get(url)
+            response = self.session.get(url, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
@@ -341,7 +347,7 @@ class CloudflareImagesService:
             update_data["requireSignedURLs"] = require_signed_urls
 
         try:
-            response = self.session.patch(url, json=update_data)
+            response = self.session.patch(url, json=update_data, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
@@ -389,7 +395,7 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image.cloudflare_id}"
 
         try:
-            response = self.session.delete(url)
+            response = self.session.delete(url, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
