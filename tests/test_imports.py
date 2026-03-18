@@ -63,7 +63,8 @@ class TestImports(TestCase):
         """
         Importing / instantiating the service must not raise even when required
         settings (ACCOUNT_ID, API_TOKEN) are absent.  The ValueError should only
-        be raised lazily, when an API method is actually called.
+        be raised lazily, when the required settings are actually accessed — either
+        via properties directly or when an API method is called.
         """
         from django_cloudflareimages_toolkit.services import CloudflareImagesService
 

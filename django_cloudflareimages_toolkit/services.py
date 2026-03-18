@@ -44,15 +44,19 @@ class CloudflareImagesService:
 
     @property
     def session(self) -> requests.Session:
+        # Read token first: if it raises (missing settings), _session stays None
+        # so the next access will retry rather than returning a half-initialised session.
+        api_token = self.api_token
         if self._session is None:
             with self._session_lock:
                 if self._session is None:
-                    self._session = requests.Session()
-                    self._session.headers.update(
-                        {
-                            "Authorization": f"Bearer {self.api_token}",
-                        }
-                    )
+                    new_session = requests.Session()
+                    new_session.headers["Authorization"] = f"Bearer {api_token}"
+                    self._session = new_session
+        else:
+            # Keep the Authorization header in sync with the current token so
+            # that override_settings changes are reflected on subsequent calls.
+            self._session.headers["Authorization"] = f"Bearer {api_token}"
         return self._session
 
     def get_direct_upload_url(
