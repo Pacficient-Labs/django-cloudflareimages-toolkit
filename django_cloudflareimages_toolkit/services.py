@@ -7,6 +7,7 @@ Cloudflare Images API, managing image uploads, and transformations.
 
 import json
 import logging
+import threading
 from datetime import timedelta
 from typing import Any
 
@@ -26,16 +27,40 @@ class CloudflareImagesService:
     """Service class for Cloudflare Images API operations."""
 
     def __init__(self):
-        self.account_id = cloudflare_settings.account_id
-        self.api_token = cloudflare_settings.api_token
-        self.base_url = cloudflare_settings.base_url
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "Authorization": f"Bearer {self.api_token}",
-                "Content-Type": "application/json",
-            }
-        )
+        # Each thread gets its own Session so there is no shared mutable state
+        # (e.g. cookies, adapters) between concurrent callers.
+        self._local: threading.local = threading.local()
+
+    @property
+    def account_id(self) -> str:
+        return cloudflare_settings.account_id
+
+    @property
+    def api_token(self) -> str:
+        return cloudflare_settings.api_token
+
+    @property
+    def base_url(self) -> str:
+        return cloudflare_settings.base_url
+
+    @property
+    def session(self) -> requests.Session:
+        # Return the Session for the current thread, creating it on first use.
+        # Using threading.local() means each thread has its own independent
+        # Session so concurrent API calls cannot share cookies or other mutable
+        # session state. Auth headers are passed per-request via _auth_headers()
+        # so override_settings changes are reflected immediately.
+        if not hasattr(self._local, "session"):
+            self._local.session = requests.Session()
+        return self._local.session
+
+    def _auth_headers(self) -> dict[str, str]:
+        """Return per-request Authorization headers using the current API token.
+
+        Reading the token on each call keeps the header in sync with
+        override_settings changes and avoids mutating shared session state.
+        """
+        return {"Authorization": f"Bearer {self.api_token}"}
 
     def get_direct_upload_url(
         self,
@@ -111,9 +136,11 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v2/direct_upload"
 
         try:
-            # Use form data for this endpoint
-            self.session.headers.pop("Content-Type", None)
-            response = self.session.post(url, files=form_data)
+            # This endpoint requires multipart/form-data. Using (None, value) tuples
+            # encodes each field as a plain form field (no filename) so the request
+            # matches Cloudflare's expected -F key=value semantics.
+            files = {k: (None, v) for k, v in form_data.items()}
+            response = self.session.post(url, files=files, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
@@ -155,10 +182,6 @@ class CloudflareImagesService:
             logger.error(f"Failed to create direct upload URL: {str(e)}")
             raise CloudflareImagesError(f"Failed to create upload URL: {str(e)}") from e
 
-        finally:
-            # Restore Content-Type header
-            self.session.headers["Content-Type"] = "application/json"
-
     def check_image_status(self, image: CloudflareImage) -> dict[str, Any]:
         """
         Check the status of an image upload.
@@ -175,7 +198,7 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image.cloudflare_id}"
 
         try:
-            response = self.session.get(url)
+            response = self.session.get(url, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
@@ -236,7 +259,7 @@ class CloudflareImagesService:
         }
 
         try:
-            response = self.session.get(url, params=params)
+            response = self.session.get(url, params=params, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
@@ -273,7 +296,7 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image_id}"
 
         try:
-            response = self.session.get(url)
+            response = self.session.get(url, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
@@ -323,7 +346,7 @@ class CloudflareImagesService:
             update_data["requireSignedURLs"] = require_signed_urls
 
         try:
-            response = self.session.patch(url, json=update_data)
+            response = self.session.patch(url, json=update_data, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()
@@ -371,7 +394,7 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image.cloudflare_id}"
 
         try:
-            response = self.session.delete(url)
+            response = self.session.delete(url, headers=self._auth_headers())
             response.raise_for_status()
 
             data = response.json()

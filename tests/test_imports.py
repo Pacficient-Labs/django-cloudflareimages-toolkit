@@ -3,7 +3,7 @@ Test basic imports and package structure
 """
 
 import pytest
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 
 @pytest.mark.django_db
@@ -57,6 +57,52 @@ class TestImports(TestCase):
         self.assertIn("django_cloudflareimages_toolkit", settings.INSTALLED_APPS)
         self.assertIn("CLOUDFLARE_IMAGES", dir(settings))
         self.assertEqual(settings.CLOUDFLARE_IMAGES["ACCOUNT_ID"], "test-account-id")
+
+    @override_settings(CLOUDFLARE_IMAGES={})
+    def test_service_instantiation_without_settings_does_not_raise(self):
+        """
+        Importing / instantiating the service must not raise even when required
+        settings (ACCOUNT_ID, API_TOKEN) are absent.  The ValueError should only
+        be raised lazily, when the required settings are actually accessed — either
+        via properties directly or when an API method is called.
+        """
+        from django_cloudflareimages_toolkit.services import CloudflareImagesService
+
+        # Must not raise at construction time
+        service = CloudflareImagesService()
+
+        # Accessing required settings properties must raise ValueError
+        with self.assertRaises(ValueError):
+            _ = service.account_id
+
+        with self.assertRaises(ValueError):
+            _ = service.api_token
+
+    def test_settings_are_read_dynamically(self):
+        """Settings changes via override_settings must be reflected immediately.
+
+        Reads values under the default test settings first, then overrides them
+        via a context manager and asserts the change is visible immediately,
+        proving that settings are not cached at import / instantiation time.
+        """
+        from django_cloudflareimages_toolkit.settings import cloudflare_settings
+
+        # Confirm the default test-settings values are visible first
+        self.assertEqual(cloudflare_settings.account_id, "test-account-id")
+
+        # Applying override_settings as a context manager must be reflected at once
+        with override_settings(
+            CLOUDFLARE_IMAGES={
+                "ACCOUNT_ID": "overridden-id",
+                "ACCOUNT_HASH": "overridden-hash",
+                "API_TOKEN": "overridden-token",
+            }
+        ):
+            self.assertEqual(cloudflare_settings.account_id, "overridden-id")
+            self.assertEqual(cloudflare_settings.api_token, "overridden-token")
+
+        # Values must revert once the override is lifted
+        self.assertEqual(cloudflare_settings.account_id, "test-account-id")
 
 
 class TestTransformations(TestCase):
