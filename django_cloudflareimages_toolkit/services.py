@@ -259,7 +259,9 @@ class CloudflareImagesService:
         }
 
         try:
-            response = self.session.get(url, params=params, headers=self._auth_headers())
+            response = self.session.get(
+                url, params=params, headers=self._auth_headers()
+            )
             response.raise_for_status()
 
             data = response.json()
@@ -346,7 +348,9 @@ class CloudflareImagesService:
             update_data["requireSignedURLs"] = require_signed_urls
 
         try:
-            response = self.session.patch(url, json=update_data, headers=self._auth_headers())
+            response = self.session.patch(
+                url, json=update_data, headers=self._auth_headers()
+            )
             response.raise_for_status()
 
             data = response.json()
