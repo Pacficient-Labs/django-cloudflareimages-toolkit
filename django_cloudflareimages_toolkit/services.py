@@ -51,7 +51,6 @@ class CloudflareImagesService:
                     self._session.headers.update(
                         {
                             "Authorization": f"Bearer {self.api_token}",
-                            "Content-Type": "application/json",
                         }
                     )
         return self._session
@@ -130,8 +129,8 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v2/direct_upload"
 
         try:
-            # Use form data for this endpoint
-            self.session.headers.pop("Content-Type", None)
+            # This endpoint requires multipart/form-data; using files= lets
+            # requests set the correct Content-Type boundary automatically.
             response = self.session.post(url, files=form_data)
             response.raise_for_status()
 
@@ -173,10 +172,6 @@ class CloudflareImagesService:
         except requests.RequestException as e:
             logger.error(f"Failed to create direct upload URL: {str(e)}")
             raise CloudflareImagesError(f"Failed to create upload URL: {str(e)}") from e
-
-        finally:
-            # Restore Content-Type header
-            self.session.headers["Content-Type"] = "application/json"
 
     def check_image_status(self, image: CloudflareImage) -> dict[str, Any]:
         """
