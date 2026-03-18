@@ -27,8 +27,9 @@ class CloudflareImagesService:
     """Service class for Cloudflare Images API operations."""
 
     def __init__(self):
-        self._session = None
-        self._session_lock = threading.Lock()
+        # Each thread gets its own Session so there is no shared mutable state
+        # (e.g. cookies, adapters) between concurrent callers.
+        self._local: threading.local = threading.local()
 
     @property
     def account_id(self) -> str:
@@ -44,18 +45,16 @@ class CloudflareImagesService:
 
     @property
     def session(self) -> requests.Session:
-        # Session holds no auth headers; credentials are passed per-request via
-        # _auth_headers() so that override_settings changes are reflected
-        # immediately and there is no shared mutable header state across threads.
-        # Credential validation happens on the first API call when _auth_headers()
-        # reads api_token.
-        if self._session is None:
-            with self._session_lock:
-                if self._session is None:
-                    self._session = requests.Session()
-        return self._session
+        # Return the Session for the current thread, creating it on first use.
+        # Using threading.local() means each thread has its own independent
+        # Session so concurrent API calls cannot share cookies or other mutable
+        # session state. Auth headers are passed per-request via _auth_headers()
+        # so override_settings changes are reflected immediately.
+        if not hasattr(self._local, "session"):
+            self._local.session = requests.Session()
+        return self._local.session
 
-    def _auth_headers(self) -> dict:
+    def _auth_headers(self) -> dict[str, str]:
         """Return per-request Authorization headers using the current API token.
 
         Reading the token on each call keeps the header in sync with
