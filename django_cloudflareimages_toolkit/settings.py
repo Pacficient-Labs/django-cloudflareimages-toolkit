@@ -11,8 +11,9 @@ from django.conf import settings
 class CloudflareImagesSettings:
     """Settings configuration for Cloudflare Images."""
 
-    def __init__(self):
-        self._settings = getattr(settings, "CLOUDFLARE_IMAGES", {})
+    @property
+    def _settings(self):
+        return getattr(settings, "CLOUDFLARE_IMAGES", {})
 
     @property
     def account_id(self) -> str:

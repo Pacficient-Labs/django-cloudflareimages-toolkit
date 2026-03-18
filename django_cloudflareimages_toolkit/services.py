@@ -7,6 +7,7 @@ Cloudflare Images API, managing image uploads, and transformations.
 
 import json
 import logging
+import threading
 from datetime import timedelta
 from typing import Any
 
@@ -26,16 +27,34 @@ class CloudflareImagesService:
     """Service class for Cloudflare Images API operations."""
 
     def __init__(self):
-        self.account_id = cloudflare_settings.account_id
-        self.api_token = cloudflare_settings.api_token
-        self.base_url = cloudflare_settings.base_url
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "Authorization": f"Bearer {self.api_token}",
-                "Content-Type": "application/json",
-            }
-        )
+        self._session = None
+        self._session_lock = threading.Lock()
+
+    @property
+    def account_id(self) -> str:
+        return cloudflare_settings.account_id
+
+    @property
+    def api_token(self) -> str:
+        return cloudflare_settings.api_token
+
+    @property
+    def base_url(self) -> str:
+        return cloudflare_settings.base_url
+
+    @property
+    def session(self) -> requests.Session:
+        if self._session is None:
+            with self._session_lock:
+                if self._session is None:
+                    self._session = requests.Session()
+                    self._session.headers.update(
+                        {
+                            "Authorization": f"Bearer {self.api_token}",
+                            "Content-Type": "application/json",
+                        }
+                    )
+        return self._session
 
     def get_direct_upload_url(
         self,

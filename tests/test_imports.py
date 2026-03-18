@@ -3,7 +3,7 @@ Test basic imports and package structure
 """
 
 import pytest
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 
 @pytest.mark.django_db
@@ -57,6 +57,39 @@ class TestImports(TestCase):
         self.assertIn("django_cloudflareimages_toolkit", settings.INSTALLED_APPS)
         self.assertIn("CLOUDFLARE_IMAGES", dir(settings))
         self.assertEqual(settings.CLOUDFLARE_IMAGES["ACCOUNT_ID"], "test-account-id")
+
+    @override_settings(CLOUDFLARE_IMAGES={})
+    def test_service_instantiation_without_settings_does_not_raise(self):
+        """
+        Importing / instantiating the service must not raise even when required
+        settings (ACCOUNT_ID, API_TOKEN) are absent.  The ValueError should only
+        be raised lazily, when an API method is actually called.
+        """
+        from django_cloudflareimages_toolkit.services import CloudflareImagesService
+
+        # Must not raise at construction time
+        service = CloudflareImagesService()
+
+        # Accessing required settings properties must raise ValueError
+        with self.assertRaises(ValueError):
+            _ = service.account_id
+
+        with self.assertRaises(ValueError):
+            _ = service.api_token
+
+    @override_settings(
+        CLOUDFLARE_IMAGES={
+            "ACCOUNT_ID": "overridden-id",
+            "ACCOUNT_HASH": "overridden-hash",
+            "API_TOKEN": "overridden-token",
+        }
+    )
+    def test_settings_are_read_dynamically(self):
+        """Settings changes via override_settings must be reflected immediately."""
+        from django_cloudflareimages_toolkit.settings import cloudflare_settings
+
+        self.assertEqual(cloudflare_settings.account_id, "overridden-id")
+        self.assertEqual(cloudflare_settings.api_token, "overridden-token")
 
 
 class TestTransformations(TestCase):
