@@ -1,7 +1,16 @@
 Webhook Configuration
-====================
+=====================
 
-This guide explains how to configure webhooks in your Cloudflare dashboard to automatically update image status when uploads complete.
+This guide explains how to configure webhooks in your Cloudflare dashboard
+to automatically update image status when uploads complete, and documents
+the request/response contract that ``WebhookView`` enforces on the
+Django side.
+
+.. note::
+   The signature-validation gate is **enforced** when
+   ``CLOUDFLARE_IMAGES["WEBHOOK_SECRET"]`` is set: requests without a
+   valid signature header are rejected before the body is parsed. See
+   `Response Codes`_ below for the full status-code matrix.
 
 What are Webhooks?
 ------------------
@@ -147,6 +156,43 @@ Step 2: Create Notification Policy
 
 .. note::
    Replace ``webhook-destination-id-from-step-1`` with the ID returned from the first API call.
+
+Response Codes
+--------------
+
+``WebhookView.post`` returns the following statuses. Configure your
+upstream monitoring on the **4xx** path for caller errors and the
+**5xx** path for genuine outages; that split is meaningful here.
+
+.. list-table::
+   :widths: 12 88
+   :header-rows: 1
+
+   * - Status
+     - When
+   * - ``200 OK``
+     - Payload validated, processed, image found and updated.
+   * - ``400 Bad Request``
+     - Body wasn't valid JSON, **or** body parsed but failed
+       ``WebhookPayloadSerializer`` validation. The caller sent a
+       malformed payload.
+   * - ``401 Unauthorized``
+     - ``WEBHOOK_SECRET`` is configured **and** the request is missing
+       an ``X-Signature`` / ``X-Cloudflare-Signature`` header, **or**
+       the supplied signature failed HMAC verification.
+   * - ``404 Not Found``
+     - Payload was valid but referenced a ``cloudflare_id`` not present
+       in the local ``CloudflareImage`` table.
+   * - ``500 Internal Server Error``
+     - Reserved for genuinely unexpected failures inside
+       ``cloudflare_service.process_webhook``. A traceback is logged via
+       ``logger.exception``.
+
+.. versionchanged:: 1.0.11
+   The signature gate is now enforced when ``WEBHOOK_SECRET`` is set
+   (was previously bypassed when the header was absent), and malformed
+   payloads now return ``400`` instead of being misclassified as ``500``.
+   See the v1.0.11 release notes for the underlying bug analysis.
 
 Webhook Payload Examples
 -------------------------

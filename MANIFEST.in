@@ -1,10 +1,10 @@
 include README.md
 include LICENSE
 include CONTRIBUTING.md
-include WEBHOOK_SETUP.md
 include pyproject.toml
 include uv.lock
 recursive-include django_cloudflareimages_toolkit *.py
+include django_cloudflareimages_toolkit/py.typed
 recursive-include django_cloudflareimages_toolkit/static *
 recursive-include django_cloudflareimages_toolkit/templates *
 recursive-include django_cloudflareimages_toolkit/management *

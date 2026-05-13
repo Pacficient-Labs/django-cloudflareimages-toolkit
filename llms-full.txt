@@ -223,12 +223,25 @@ X-Signature: sha256=webhook-signature
 Content-Type: application/json
 
 {
-    "eventType": "image.uploaded",
-    "imageId": "cloudflare-image-id",
-    "status": "uploaded",
+    "id": "cloudflare-image-id",
+    "uploaded": "2026-01-01T00:00:00Z",
+    "draft": false,
+    "variants": ["https://imagedelivery.net/..."],
     "metadata": {...}
 }
 ```
+
+**Status codes returned by `WebhookView.post`:**
+
+| Status | When |
+|---|---|
+| 200 | Payload validated, processed, image found and updated |
+| 400 | Body wasn't valid JSON OR failed `WebhookPayloadSerializer` validation |
+| 401 | `WEBHOOK_SECRET` is configured and the request has no signature header, OR the signature failed HMAC verification |
+| 404 | Payload was valid but referenced a `cloudflare_id` not in the local `CloudflareImage` table |
+| 500 | Reserved for genuinely unexpected failures inside `cloudflare_service.process_webhook` |
+
+The 401 path is only ever taken when `WEBHOOK_SECRET` is set. Deployments without a configured secret accept any well-formed payload — set a secret to enable enforcement. (See v1.0.11 release notes.)
 
 ## Technical Architecture
 
@@ -348,9 +361,11 @@ The service implements comprehensive error handling:
 - Invalid transformation parameters
 
 **Webhook Errors**:
-- Invalid signatures
-- Malformed payloads
+- Missing signature when `WEBHOOK_SECRET` is configured — returns 401 *before* parsing the body (since v1.0.11). Prevents callers from skating past the gate by simply omitting the header.
+- Invalid signatures — 401 from the HMAC validation path
+- Malformed payloads — schema mismatches surface as **400** (since v1.0.11; previously masked as 500)
 - Unknown event types
+- Unexpected processing failures — 500 with a logged traceback via `logger.exception()`
 
 All errors are logged using Python's logging module with appropriate log levels and include contextual information for debugging.
 
@@ -889,7 +904,6 @@ django-cloudflareimages-toolkit/
 ├── pyproject.toml                      # Package configuration with uv support
 ├── README.md                           # Comprehensive documentation
 ├── CONTRIBUTING.md                     # Contribution guidelines
-├── WEBHOOK_SETUP.md                    # Webhook configuration guide
 ├── PACKAGE_SUMMARY.md                  # Package overview and features
 ├── LICENSE                             # MIT license
 ├── MANIFEST.in                         # Package manifest

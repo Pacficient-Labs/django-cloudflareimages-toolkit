@@ -120,7 +120,6 @@ django-cloudflareimages-toolkit/
 ├── pyproject.toml                      # Package configuration with uv support
 ├── README.md                           # Comprehensive documentation
 ├── CONTRIBUTING.md                     # Contribution guidelines
-├── WEBHOOK_SETUP.md                    # Webhook configuration guide
 └── LICENSE                             # MIT license
 ```
 
@@ -144,7 +143,7 @@ django-cloudflareimages-toolkit/
 - `GET /api/images/` - List images with filtering
 - `POST /api/images/{id}/check_status/` - Check image status
 - `GET /api/stats/` - Get upload statistics
-- `POST /api/webhook/` - Handle Cloudflare webhooks
+- `POST /api/webhook/` - Handle Cloudflare webhooks (200 ok / 400 bad payload / 401 missing or invalid signature when WEBHOOK_SECRET is set / 404 unknown image / 500 unexpected processing error — see Webhook Integration below)
 
 ### Template Tags
 - `cf_thumbnail` - Generate thumbnail URLs
@@ -160,9 +159,10 @@ django-cloudflareimages-toolkit/
 
 ### Webhook Integration
 - Automatic status updates from Cloudflare
-- HMAC signature validation for security
+- HMAC signature validation for security — a configured `WEBHOOK_SECRET` is enforced as **required**: requests without an `X-Signature` (or `X-Cloudflare-Signature`) header are rejected with 401 *before* the body is parsed (since v1.0.11)
+- Schema validation surfaces as 400 (since v1.0.11) — a malformed payload is a caller bug, not a server fault
 - Support for all Cloudflare Images webhook events
-- Comprehensive setup documentation
+- Comprehensive setup documentation in `docs/webhooks.rst` (rendered at https://django-cloudflareimages-toolkit.readthedocs.io/en/latest/webhooks.html)
 
 ### Admin Interface
 - Rich Django admin with image thumbnails

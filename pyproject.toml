@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "django-cloudflareimages-toolkit"
-version = "1.0.11"
+version = "1.0.12"
 description = "Comprehensive Django toolkit for Cloudflare Images with direct creator upload, transformations, and management"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -12,23 +12,30 @@ authors = [
     {name = "PacNPal", email = "pac@pacnp.al"}
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Web Environment",
     "Framework :: Django",
-    "Framework :: Django :: 4.0",
-    "Framework :: Django :: 4.1",
+    # Django 4.0 and 4.1 are EOL and never installable here (this package
+    # requires Python >=3.10, which neither 4.0 nor 4.1 fully supported);
+    # 5.0 reached end-of-mainstream in April 2025. Dropping their classifiers
+    # so PyPI's "compatible Django versions" facet reflects reality.
     "Framework :: Django :: 4.2",
-    "Framework :: Django :: 5.0",
+    "Framework :: Django :: 5.1",
+    "Framework :: Django :: 5.2",
+    "Framework :: Django :: 6.0",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 keywords = ["django", "cloudflare", "images", "upload", "direct-creator"]
 requires-python = ">=3.10"
@@ -70,6 +77,11 @@ Homepage = "https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit"
 Documentation = "https://django-cloudflareimages-toolkit.readthedocs.io/"
 Repository = "https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit.git"
 Issues = "https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/issues"
+# PyPI surfaces these last two as a "Changelog" link in the sidebar of
+# every release page, so users land on the GitHub releases stream
+# instead of having to drill in via the repo Homepage.
+Changelog = "https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/releases"
+"Release Notes" = "https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/releases"
 
 [tool.hatch.build.targets.wheel]
 packages = ["django_cloudflareimages_toolkit"]

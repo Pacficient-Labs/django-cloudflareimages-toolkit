@@ -5,15 +5,18 @@ version: 2
 
 # Set the OS, Python version and other tools you might need
 build:
-  os: ubuntu-22.04
+  os: ubuntu-24.04
   tools:
-    python: "3.11"
-    # You can also specify other tools here
+    # 3.12 covers every Django version the package supports (4.2 / 5.1 /
+    # 5.2 / 6.0). Bumped from 3.11 alongside the v1.0.12 metadata refresh.
+    python: "3.12"
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:
   configuration: docs/conf.py
-  fail_on_warning: false
+  # Promote warnings to errors so a broken cross-reference or stale path
+  # fails the RTD build instead of silently shipping a broken page.
+  fail_on_warning: true
 
 # Optionally build your docs in additional formats such as PDF and ePub
 formats:
