@@ -190,6 +190,164 @@ end users wait on a degraded control plane.
        return PLACEHOLDER_URL
 
 
+Failure handling for direct creator uploads
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Direct creator uploads have three failure modes worth handling
+explicitly. Each maps to a concrete recovery path:
+
+1. **URL provisioning fails** (`create_direct_upload_url` raises
+   ``CloudflareImagesError``) — Cloudflare API was unreachable or
+   refused the request. The user clicked "upload" and got nothing.
+2. **Upload POST fails** (the browser or server-side ``requests.post``
+   to ``image.upload_url`` errors out) — Cloudflare's edge accepted
+   the URL but couldn't accept the bytes. Likely transient.
+3. **Cloudflare rejects the file after upload** (webhook delivers a
+   failure event, ``check_image_status`` returns ``status="failed"``)
+   — Cloudflare took the bytes but processing failed (corrupt JPEG,
+   unsupported format, too large, etc.). Not retryable.
+
+The pattern below combines retry, user feedback, and a local fallback
+into a single end-to-end recipe.
+
+.. code-block:: python
+
+   import logging
+   from typing import Any
+
+   import requests
+   from django.contrib import messages
+   from django.core.cache import cache
+   from django.db import transaction
+
+   from django_cloudflareimages_toolkit.exceptions import CloudflareImagesError
+   from django_cloudflareimages_toolkit.services import cloudflare_service
+
+   logger = logging.getLogger(__name__)
+
+
+   @retry_cloudflare(attempts=4, base_delay=0.5, max_delay=8.0)
+   def _provision_upload_slot(user, metadata):
+       return cloudflare_service.create_direct_upload_url(
+           user=user, metadata=metadata, expiry_minutes=30
+       )
+
+
+   def _post_bytes(upload_url: str, blob: bytes, name: str) -> None:
+       """Server-side POST with a short retry on transient network errors."""
+       last_exc: Exception | None = None
+       for attempt in range(1, 4):
+           try:
+               r = requests.post(
+                   upload_url,
+                   files={"file": (name, blob, "application/octet-stream")},
+                   timeout=30,
+               )
+               r.raise_for_status()
+               return
+           except requests.RequestException as exc:
+               last_exc = exc
+               if attempt < 3:
+                   time.sleep(0.5 * (2 ** (attempt - 1)))
+       assert last_exc is not None
+       raise last_exc
+
+
+   def upload_with_recovery(request, blob: bytes, filename: str):
+       """End-to-end upload that notifies the user on every failure mode
+       and persists local state regardless of whether Cloudflare succeeds.
+       """
+       # Step 1: provision the upload slot.
+       try:
+           image = _provision_upload_slot(
+               request.user,
+               metadata={"source": "user_upload", "ip": _client_ip(request)},
+           )
+       except CloudflareImagesError as exc:
+           logger.exception("Cloudflare URL provisioning failed")
+           messages.error(
+               request,
+               "We're having trouble reaching our image host. "
+               "Your file was NOT uploaded. Please try again in a few minutes.",
+           )
+           _record_failed_attempt(request.user, filename, reason="provision")
+           return None
+
+       # Step 2: post the bytes.
+       try:
+           _post_bytes(image.upload_url, blob, image.cloudflare_id)
+       except requests.RequestException as exc:
+           logger.exception("Cloudflare upload POST failed")
+           messages.warning(
+               request,
+               "Upload couldn't be completed. We've saved a draft locally — "
+               "you can retry without re-selecting your file.",
+           )
+           _store_local_fallback(request.user, image, blob, filename)
+           return image
+
+       # Step 3: confirm Cloudflare accepted the file.
+       try:
+           cloudflare_service.check_image_status(image)
+           image.refresh_from_db()
+       except CloudflareImagesError:
+           # Status check failed but the bytes were delivered; the
+           # webhook will eventually move the row to UPLOADED or FAILED.
+           # Don't block the user response on this.
+           pass
+
+       if image.status == "failed":
+           messages.error(
+               request,
+               "Your image was rejected (unsupported format or corrupt file). "
+               "Please pick a different file.",
+           )
+           return image
+
+       messages.success(request, "Image uploaded successfully.")
+       return image
+
+
+   def _store_local_fallback(user, image, blob: bytes, filename: str) -> None:
+       """Persist the bytes so the user can retry without re-selecting.
+
+       Stash in cache (small footprint, expires automatically) and link
+       to the CloudflareImage row so the retry handler can pick up where
+       this attempt left off.
+       """
+       key = f"upload_fallback:{user.pk}:{image.pk}"
+       cache.set(key, {"blob": blob, "filename": filename}, timeout=3600)
+
+
+   def retry_failed_upload(request, image_id: int):
+       key = f"upload_fallback:{request.user.pk}:{image_id}"
+       data = cache.get(key)
+       if not data:
+           messages.error(request, "Your previous upload has expired — please re-select your file.")
+           return None
+       image = cloudflare_service.create_direct_upload_url(user=request.user)
+       _post_bytes(image.upload_url, data["blob"], data["filename"])
+       cache.delete(key)
+       return image
+
+Key behaviors:
+
+- **User notification is per failure mode.** Provisioning failure says
+  "we couldn't reach our image host"; upload failure says "we saved a
+  draft, retry"; rejection says "your file is the problem." That's
+  three distinct user states with three distinct recovery paths.
+- **Retries are layered** — ``_provision_upload_slot`` retries the
+  Cloudflare control plane, ``_post_bytes`` retries the edge upload,
+  and ``check_image_status`` is *not* retried because the webhook will
+  drive the same state machine asynchronously.
+- **Local fallback** uses Django's cache rather than disk so it
+  expires automatically and works across Gunicorn workers. For larger
+  files, swap the cache for an S3-backed staging bucket.
+- **The CloudflareImage row is always persisted** even when the POST
+  fails — that gives the retry handler a stable anchor and lets
+  operators see how many uploads stalled at each step (a useful
+  signal for a Cloudflare degradation dashboard).
+
 Distributed processing pipeline
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -278,7 +436,7 @@ detail/update/delete attempts.
 
 
 Authorization middleware (alternative wiring)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 If your access policy spans many endpoints (not just the bundled
 viewset), Django middleware can enforce it before the request even

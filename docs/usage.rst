@@ -25,19 +25,134 @@ The simplest way to use Cloudflare Images is with the ``CloudflareImageField``:
 Direct Upload Service
 ---------------------
 
-For programmatic image uploads, use the ``CloudflareImagesService``:
+For programmatic image uploads, use ``CloudflareImagesService``. The
+service exposes two related operations: generating a one-time upload
+URL (for handing to a browser or another service) and the full
+end-to-end flow of uploading a local file from disk straight to
+Cloudflare.
+
+Generating a direct upload URL
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   from django_cloudflareimages_toolkit.services import CloudflareImagesService
-   
-   # Initialize the service
-   service = CloudflareImagesService()
-   
-   # Generate a direct upload URL
-   upload_data = service.get_direct_upload_url()
-   print(f"Upload URL: {upload_data['uploadURL']}")
-   print(f"Image ID: {upload_data['id']}")
+   from django_cloudflareimages_toolkit.services import cloudflare_service
+
+   # Returns a CloudflareImage row with the upload_url populated and
+   # status=PENDING. The same row will move to UPLOADED once Cloudflare
+   # finishes processing the upload (you can poll via check_image_status
+   # or wire up the WebhookView — see docs/webhooks.rst).
+   image = cloudflare_service.create_direct_upload_url(
+       user=request.user,
+       metadata={"category": "profile", "user_id": str(request.user.pk)},
+       require_signed_urls=False,
+       expiry_minutes=30,
+   )
+
+   print(image.cloudflare_id)   # e.g. "2cdc28f0-017a-49c4-9ed7-..."
+   print(image.upload_url)      # one-time URL — POST the file here
+
+Server-side: uploading a local file from disk
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A common pattern is to upload an image stored on the Django server
+(generated thumbnail, imported asset, content-management workflow)
+straight to Cloudflare without involving a browser. The toolkit drives
+this through the same Direct Creator Upload primitive — get an upload
+URL from Cloudflare, then ``POST`` the file bytes to it.
+
+.. code-block:: python
+
+   import requests
+   from django_cloudflareimages_toolkit.services import cloudflare_service
+   from django_cloudflareimages_toolkit.exceptions import CloudflareImagesError
+
+
+   def upload_local_image(path: str, *, user=None, metadata=None):
+       """Upload a file from disk to Cloudflare Images.
+
+       Returns the populated CloudflareImage row.
+       """
+       # 1. Reserve a one-time upload slot. The returned CloudflareImage
+       #    is already persisted with status=PENDING, so a webhook or
+       #    a later check_image_status() call has a row to update.
+       image = cloudflare_service.create_direct_upload_url(
+           user=user,
+           metadata=metadata or {},
+           expiry_minutes=30,
+       )
+
+       # 2. POST the bytes. Cloudflare's Direct Creator endpoint expects
+       #    multipart/form-data with the file under the field name "file".
+       with open(path, "rb") as fh:
+           response = requests.post(
+               image.upload_url,
+               files={"file": (image.cloudflare_id, fh, "application/octet-stream")},
+               timeout=60,
+           )
+
+       if not response.ok:
+           raise CloudflareImagesError(
+               f"Cloudflare upload POST failed: {response.status_code} {response.text[:200]}"
+           )
+
+       # 3. Sync the local row with the now-uploaded state. This is
+       #    idempotent — the webhook (if configured) will also drive
+       #    this transition.
+       cloudflare_service.check_image_status(image)
+       image.refresh_from_db()
+       return image
+
+
+   # Usage
+   image = upload_local_image(
+       "/srv/media/incoming/banner.jpg",
+       user=request.user,
+       metadata={"source": "cms_import"},
+   )
+   print(image.status)             # "uploaded"
+   print(image.public_url)         # delivery URL
+   print(image.get_variant_url("thumbnail"))
+
+The same pattern works for ``BytesIO`` and ``InMemoryUploadedFile`` —
+swap the ``open(path, "rb")`` line for the file-like object you already
+have.
+
+.. note::
+
+   The upload URL is single-use and expires per ``expiry_minutes`` (2–360
+   minutes; default 30). If you batch hundreds of uploads, request one
+   URL per file rather than reusing — Cloudflare rejects reuse.
+
+For production-grade retry, circuit-breaking, and graceful degradation
+around this flow, see :doc:`patterns`.
+
+Bulk uploads
+~~~~~~~~~~~~
+
+For batch jobs, push each ``upload_local_image`` call through a task
+queue rather than running them inline. A Celery example:
+
+.. code-block:: python
+
+   from celery import shared_task
+   from django_cloudflareimages_toolkit.exceptions import CloudflareImagesError
+
+   @shared_task(
+       bind=True,
+       autoretry_for=(CloudflareImagesError, requests.RequestException),
+       retry_backoff=True,
+       retry_backoff_max=300,
+       retry_jitter=True,
+       max_retries=8,
+   )
+   def upload_local_image_async(self, path: str, *, user_id: int | None = None):
+       from django.contrib.auth import get_user_model
+       user = get_user_model().objects.get(pk=user_id) if user_id else None
+       return upload_local_image(path, user=user).cloudflare_id
+
+This pattern is covered in more detail (with circuit-breaker + cache
+fallback) in :doc:`patterns`.
 
 Frontend Integration
 --------------------

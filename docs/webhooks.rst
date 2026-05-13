@@ -77,42 +77,109 @@ The webhook will be triggered for these events:
 Django Configuration
 --------------------
 
-1. Webhook Secret (Recommended)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+End-to-end Django setup is five steps. Run them in order on a fresh
+project; each step is independent on a project that already has the
+toolkit installed.
 
-Add a webhook secret to your Django settings for security:
+Step 1: Install the package
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   pip install django-cloudflareimages-toolkit
+
+Then add ``"django_cloudflareimages_toolkit"`` to ``INSTALLED_APPS``
+and run ``python manage.py migrate`` so the ``CloudflareImage`` and
+``ImageUploadLog`` tables are created. The webhook view writes status
+changes into these tables.
+
+Step 2: Configure the webhook secret
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Generate a high-entropy secret (e.g. ``python -c 'import secrets;
+print(secrets.token_urlsafe(32))'``) and store it in your settings.
+The same value must be entered in the Cloudflare dashboard in step 5.
 
 .. code-block:: python
 
    # settings.py
+   import os
+
    CLOUDFLARE_IMAGES = {
-       'ACCOUNT_ID': 'your-cloudflare-account-id',
-       'API_TOKEN': 'your-cloudflare-api-token',
-       'WEBHOOK_SECRET': 'your-secure-webhook-secret-key',  # Add this
-       # ... other settings
+       "ACCOUNT_ID": os.environ["CLOUDFLARE_ACCOUNT_ID"],
+       "API_TOKEN":  os.environ["CLOUDFLARE_API_TOKEN"],
+       "WEBHOOK_SECRET": os.environ["CLOUDFLARE_WEBHOOK_SECRET"],
    }
 
-2. URL Configuration
-~~~~~~~~~~~~~~~~~~~~
+.. important::
 
-Ensure your webhook URL is accessible:
+   Setting ``WEBHOOK_SECRET`` is what *enforces* signature validation
+   on inbound webhook requests. Without it, every well-formed payload
+   is accepted. See :ref:`response-codes` for the gate contract.
+
+Step 3: Mount the URLs
+~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
    # urls.py
-   from django.urls import path, include
+   from django.urls import include, path
 
    urlpatterns = [
-       # ... your other URLs
-       path('cloudflare-images/', include('django_cloudflareimages_toolkit.urls')),
+       # ... your other URLs ...
+       path("cloudflare-images/", include("django_cloudflareimages_toolkit.urls")),
    ]
 
-This makes the webhook available at: ``https://yourdomain.com/cloudflare-images/api/webhook/``
+This exposes the webhook at ``https://yourdomain.com/cloudflare-images/api/webhook/``
+along with the rest of the toolkit's REST endpoints. The view is
+CSRF-exempt by default, so you do **not** need to add it to
+``CSRF_EXEMPT_PATHS`` or wrap it.
 
-3. CSRF Exemption
-~~~~~~~~~~~~~~~~~
+Step 4: React to status changes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The webhook view is automatically CSRF-exempt, so no additional configuration is needed.
+The bundled ``WebhookView`` updates the ``CloudflareImage`` row's
+``status`` field whenever Cloudflare reports a transition. To react to
+those changes in your own code, hook Django's ``post_save`` signal on
+``CloudflareImage`` and branch on the new status:
+
+.. code-block:: python
+
+   # apps.py
+   from django.apps import AppConfig
+
+   class MyAppConfig(AppConfig):
+       name = "myapp"
+
+       def ready(self):
+           from django.db.models.signals import post_save
+           from django_cloudflareimages_toolkit.models import CloudflareImage
+           from . import handlers
+           post_save.connect(handlers.on_image_status_change, sender=CloudflareImage)
+
+   # handlers.py
+   def on_image_status_change(sender, instance, created, **kwargs):
+       if instance.status == "uploaded":
+           # Image is live — generate thumbnails, send notifications, etc.
+           notify_owner(instance)
+       elif instance.status == "failed":
+           # Cloudflare rejected the upload — reset the user's UI state
+           mark_upload_failed(instance)
+
+If you'd rather process events without going through the database row,
+subclass ``WebhookView`` and override ``post``; see
+``apps/api/v1/images/cloudflare_views.py`` in
+`pacficient-labs/django-cloudflareimages-toolkit
+<https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit>`_
+for a working example.
+
+Step 5: Configure Cloudflare to deliver
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Follow the `Step-by-Step Webhook Configuration`_ above to register
+your public URL (``https://yourdomain.com/cloudflare-images/api/webhook/``)
+and the **same secret** you stored in step 2. Cloudflare will start
+delivering events on the next direct-creator upload.
 
 Alternative: Using Cloudflare API
 ----------------------------------
@@ -156,6 +223,8 @@ Step 2: Create Notification Policy
 
 .. note::
    Replace ``webhook-destination-id-from-step-1`` with the ID returned from the first API call.
+
+.. _response-codes:
 
 Response Codes
 --------------
