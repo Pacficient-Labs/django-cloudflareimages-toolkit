@@ -13,6 +13,7 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import permissions, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -212,42 +213,66 @@ class WebhookView(APIView):
     permission_classes = []  # Webhooks don't use standard authentication
 
     def post(self, request: HttpRequest) -> HttpResponse:
-        """Handle incoming webhook from Cloudflare."""
-        try:
-            # Validate webhook signature if configured
-            # Cloudflare sends signatures in X-Signature header
-            signature = request.META.get("HTTP_X_SIGNATURE") or request.META.get(
-                "HTTP_X_CLOUDFLARE_SIGNATURE"
+        """Handle incoming webhook from Cloudflare.
+
+        Status codes returned:
+          * 200 — payload processed and matched an existing image
+          * 400 — payload failed JSON parse OR schema validation
+          * 401 — webhook_secret is configured but the request was
+                  unauthenticated (missing or invalid signature)
+          * 404 — payload was valid but referenced an unknown image
+          * 500 — unexpected error while processing a validated payload
+
+        Note that 401 is only emitted when a ``CLOUDFLARE_IMAGES.WEBHOOK_SECRET``
+        is configured. Deployments without a secret accept any well-formed
+        payload — callers that want enforcement MUST set the secret.
+        """
+        secret = cloudflare_settings.webhook_secret
+        signature = request.META.get("HTTP_X_SIGNATURE") or request.META.get(
+            "HTTP_X_CLOUDFLARE_SIGNATURE"
+        )
+
+        # A configured secret means signatures are required. Reject before
+        # we parse any user-controlled JSON.
+        if secret and not signature:
+            return HttpResponse(
+                "Missing signature", status=status.HTTP_401_UNAUTHORIZED
             )
-            if signature and cloudflare_settings.webhook_secret:
-                if not cloudflare_service.validate_webhook_signature(
-                    request.body, signature
-                ):
-                    logger.warning("Invalid webhook signature received")
-                    return HttpResponse(
-                        "Invalid signature", status=status.HTTP_401_UNAUTHORIZED
-                    )
 
-            # Parse and validate payload
+        if signature and secret:
+            if not cloudflare_service.validate_webhook_signature(
+                request.body, signature
+            ):
+                logger.warning("Invalid webhook signature received")
+                return HttpResponse(
+                    "Invalid signature", status=status.HTTP_401_UNAUTHORIZED
+                )
+
+        try:
             payload = json.loads(request.body)
-            serializer = WebhookPayloadSerializer(data=payload)
-            serializer.is_valid(raise_exception=True)
-
-            # Process webhook
-            image = cloudflare_service.process_webhook(payload)
-
-            if image:
-                return HttpResponse("OK", status=status.HTTP_200_OK)
-            else:
-                return HttpResponse("Image not found", status=status.HTTP_404_NOT_FOUND)
-
         except json.JSONDecodeError:
             return HttpResponse("Invalid JSON", status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(f"Webhook processing error: {str(e)}")
+
+        serializer = WebhookPayloadSerializer(data=payload)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except DRFValidationError:
+            # A malformed payload is a caller bug, not a server bug. The
+            # previous broad ``except Exception`` reported these as 500.
+            return HttpResponse("Invalid payload", status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            image = cloudflare_service.process_webhook(payload)
+        except Exception:
+            logger.exception("Webhook processing error")
             return HttpResponse(
-                "Internal server error", status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                "Internal server error",
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        if image:
+            return HttpResponse("OK", status=status.HTTP_200_OK)
+        return HttpResponse("Image not found", status=status.HTTP_404_NOT_FOUND)
 
 
 class ImageStatsView(APIView):
