@@ -46,21 +46,27 @@ def _sign(payload: bytes, secret: str = SECRET) -> str:
 
 @pytest.fixture
 def disabled_secret(monkeypatch):
-    """Clear ``webhook_secret`` for a single test.
+    """Clear ``WEBHOOK_SECRET`` for a single test.
 
     ``override_settings`` doesn't reach the cached settings singleton, so
     we patch the dict it reads from directly.
     """
-    overrides = dict(cloudflare_settings._settings)
-    overrides["WEBHOOK_SECRET"] = ""
-    monkeypatch.setattr(cloudflare_settings, "_settings", overrides)
+    monkeypatch.setitem(cloudflare_settings._settings, "WEBHOOK_SECRET", "")
+
+
+@pytest.fixture
+def enabled_secret(monkeypatch):
+    """Force ``WEBHOOK_SECRET`` for tests that assert signature enforcement."""
+    monkeypatch.setitem(cloudflare_settings._settings, "WEBHOOK_SECRET", SECRET)
 
 
 @pytest.mark.django_db
 class TestWebhookSignatureGate:
     """Signature-handling matrix when a webhook_secret is configured."""
 
-    def test_missing_signature_with_secret_set_returns_401(self, client: Client):
+    def test_missing_signature_with_secret_set_returns_401(
+        self, client: Client, enabled_secret
+    ):
         """Configured secret + missing header = 401, NOT 200 / 5xx.
 
         Previously this case fell through the gate because the upstream
@@ -74,7 +80,9 @@ class TestWebhookSignatureGate:
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_invalid_signature_with_secret_set_returns_401(self, client: Client):
+    def test_invalid_signature_with_secret_set_returns_401(
+        self, client: Client, enabled_secret
+    ):
         body = json.dumps({"event": "test"}).encode()
         response = client.post(
             WEBHOOK_URL,
@@ -88,8 +96,12 @@ class TestWebhookSignatureGate:
         "django_cloudflareimages_toolkit.services.cloudflare_service.process_webhook",
         return_value=None,
     )
+    @pytest.mark.parametrize(
+        "signature_header",
+        ["HTTP_X_SIGNATURE", "HTTP_X_CLOUDFLARE_SIGNATURE"],
+    )
     def test_valid_signature_proceeds_to_processing(
-        self, mock_process, client: Client
+        self, mock_process, client: Client, enabled_secret, signature_header: str
     ):
         # ``id`` is the only required WebhookPayloadSerializer field;
         # everything else is optional.
@@ -98,7 +110,7 @@ class TestWebhookSignatureGate:
             WEBHOOK_URL,
             data=body,
             content_type="application/json",
-            HTTP_X_SIGNATURE=_sign(body),
+            **{signature_header: _sign(body)},
         )
         # Signature accepted, payload validated, processing called. The
         # mock returns None so the view answers 404 — but the gate
