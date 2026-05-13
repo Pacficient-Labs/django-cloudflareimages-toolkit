@@ -483,6 +483,30 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Changelog
 
+For the full release history with diff links, see [GitHub Releases](https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/releases).
+
+### v1.0.13
+
+- **Added**: New "Patterns & Recipes" docs page (`docs/patterns.rst`) with working code for failover/resilience when the Cloudflare Images API is unavailable, and for image-access authorization with role-based permissions and dynamic watermarking. Both are built on the existing service + transformation primitives — the package stays small, the docs show you how to assemble them.
+
+### v1.0.12
+
+- **Metadata-only release.** Corrected Trove classifiers (dropped EOL Django 4.0/4.1/5.0; added 5.1/5.2/6.0 + Python 3.14); promoted Development Status to Production/Stable; added `Typing :: Typed` classifier and shipped the corresponding `py.typed` marker (PEP 561).
+- **Added**: `Changelog` and `Release Notes` entries to `[project.urls]` so PyPI's sidebar links straight to GitHub releases.
+- **Docs**: Merged the standalone root-level `WEBHOOK_SETUP.md` into `docs/webhooks.rst` (now the single source, rendered on Read the Docs). Read the Docs config bumped to Python 3.12, ubuntu-24.04, and `fail_on_warning: true`.
+- **Repo**: Moved `example_usage.py` → `examples/cloudflareimagefield.py` with an `examples/README.md` index.
+
+### v1.0.11
+
+- **Fixed (security)**: `WebhookView.post` previously skipped signature validation when *either* the signature header was absent *or* `WEBHOOK_SECRET` was unset — meaning a caller could omit the `X-Signature` header entirely and bypass authentication on a deployment that thought it was protected. A configured secret now means signatures are **required**; missing-signature returns 401 before the body is parsed.
+- **Fixed (observability)**: `WebhookPayloadSerializer.is_valid(raise_exception=True)` raises DRF `ValidationError`, which used to be swallowed by a broad `except Exception` and reported as `500 Internal server error`. Malformed payloads are now `400 Invalid payload`, reserving 5xx for genuinely unexpected processing failures.
+- **Added**: Documented status-code matrix for the webhook endpoint (200/400/401/404/500) with the contract for each.
+- **Tests**: Five new regression tests in `tests/test_webhook_view.py` covering both fixes. 41/41 tests pass on Django 4.2/5.0/5.1/5.2/6.0.
+
+### v1.0.10
+
+- **Fixed**: Eager settings validation no longer blocks Django startup when `CLOUDFLARE_IMAGES` settings are absent or incomplete in non-production environments.
+
 ### v1.0.9
 
 - **Fixed**: Transformation URLs now use correct Cloudflare format (`width=300,height=200` path-based)

@@ -1,0 +1,397 @@
+Patterns & Recipes
+==================
+
+This guide covers two operational patterns that come up repeatedly when
+running ``django-cloudflareimages-toolkit`` in production but that the
+package itself deliberately does **not** bake in: resilience against
+Cloudflare API outages, and image-access authorization (including
+role-based permissions and dynamic watermarking).
+
+Both are buildable on top of the package's existing primitives —
+``cloudflare_service``, ``CloudflareImage``, ``CloudflareImageTransform``,
+and standard DRF permission classes. The recipes below show concrete,
+copy-pasteable code.
+
+.. contents::
+   :local:
+   :depth: 2
+
+
+Resilience: handling a Cloudflare Images API outage
+---------------------------------------------------
+
+``cloudflare_service`` makes synchronous HTTPS calls against
+``api.cloudflare.com``. When the Cloudflare control plane is degraded or
+unreachable, those calls fail and raise
+``django_cloudflareimages_toolkit.exceptions.CloudflareImagesError`` —
+the package surfaces the error rather than hiding it. The patterns below
+show how to layer retries, a circuit breaker, and graceful degradation
+on top of those primitives without forking the package.
+
+
+Retry with exponential backoff
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Transient Cloudflare blips (5xx, connection resets, DNS hiccups) usually
+clear within a few seconds. Wrap each service call in a backoff loop and
+log every retry so operators can spot a real outage versus normal noise.
+
+.. code-block:: python
+
+   import logging
+   import random
+   import time
+   from functools import wraps
+   from typing import Callable, TypeVar, ParamSpec
+
+   from django_cloudflareimages_toolkit.exceptions import CloudflareImagesError
+
+   logger = logging.getLogger(__name__)
+   P = ParamSpec("P")
+   T = TypeVar("T")
+
+
+   def retry_cloudflare(
+       attempts: int = 4,
+       base_delay: float = 0.5,
+       max_delay: float = 8.0,
+   ) -> Callable[[Callable[P, T]], Callable[P, T]]:
+       """Retry a Cloudflare call with capped exponential backoff + jitter.
+
+       Only retries ``CloudflareImagesError`` — caller bugs (TypeError,
+       ValueError, etc.) bubble immediately so they fail loudly in tests.
+       """
+
+       def decorator(fn: Callable[P, T]) -> Callable[P, T]:
+           @wraps(fn)
+           def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+               last_exc: CloudflareImagesError | None = None
+               for attempt in range(1, attempts + 1):
+                   try:
+                       return fn(*args, **kwargs)
+                   except CloudflareImagesError as exc:
+                       last_exc = exc
+                       if attempt == attempts:
+                           break
+                       delay = min(
+                           max_delay,
+                           base_delay * (2 ** (attempt - 1)),
+                       )
+                       # Decorrelated jitter so concurrent retriers don't
+                       # all hammer Cloudflare at the same moment.
+                       delay = random.uniform(base_delay, delay)
+                       logger.warning(
+                           "Cloudflare call failed (attempt %d/%d), retrying in %.2fs: %s",
+                           attempt,
+                           attempts,
+                           delay,
+                           exc,
+                       )
+                       time.sleep(delay)
+               assert last_exc is not None
+               raise last_exc
+
+           return wrapper
+
+       return decorator
+
+
+   from django_cloudflareimages_toolkit.services import cloudflare_service
+
+   @retry_cloudflare(attempts=4, base_delay=0.5, max_delay=8.0)
+   def create_upload_url_with_retry(user, **kwargs):
+       return cloudflare_service.create_direct_upload_url(user=user, **kwargs)
+
+
+Circuit breaker — fail fast during a real outage
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Retries help with blips, but during a multi-minute Cloudflare outage they
+just multiply the load on a struggling control plane and slow down every
+request thread. A circuit breaker trips after consecutive failures, fails
+calls immediately for a cooldown window, then probes to see if the API
+is back.
+
+The example uses Django's cache as the shared state store, which means
+it works across processes and Gunicorn workers without extra infra.
+
+.. code-block:: python
+
+   from django.core.cache import cache
+   from django_cloudflareimages_toolkit.exceptions import CloudflareImagesError
+
+   _CB_KEY = "cf_images:circuit_state"
+   _CB_FAILURE_THRESHOLD = 5
+   _CB_OPEN_SECONDS = 30
+
+
+   class CircuitOpen(CloudflareImagesError):
+       """Raised when the breaker is open. Subclasses CloudflareImagesError
+       so existing exception handlers catch it transparently."""
+
+
+   def call_with_circuit_breaker(fn, /, *args, **kwargs):
+       state = cache.get(_CB_KEY) or {"failures": 0, "open_until": 0}
+
+       import time as _t
+       now = _t.time()
+       if state["open_until"] > now:
+           raise CircuitOpen("Cloudflare Images breaker is open")
+
+       try:
+           result = fn(*args, **kwargs)
+       except CloudflareImagesError:
+           failures = state["failures"] + 1
+           if failures >= _CB_FAILURE_THRESHOLD:
+               cache.set(_CB_KEY, {"failures": 0, "open_until": now + _CB_OPEN_SECONDS}, timeout=_CB_OPEN_SECONDS + 5)
+           else:
+               cache.set(_CB_KEY, {"failures": failures, "open_until": 0}, timeout=300)
+           raise
+       else:
+           if state["failures"]:
+               cache.set(_CB_KEY, {"failures": 0, "open_until": 0}, timeout=300)
+           return result
+
+
+Graceful degradation in the request path
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For *read* paths (e.g. rendering a page that shows a user's avatar),
+treat the Cloudflare URL as a cache-warmed asset and fall back to a
+placeholder when both the cache and the API are unavailable. Don't make
+end users wait on a degraded control plane.
+
+.. code-block:: python
+
+   from django.core.cache import cache
+   from django_cloudflareimages_toolkit.models import CloudflareImage
+   from django_cloudflareimages_toolkit.exceptions import CloudflareImagesError
+
+   PLACEHOLDER_URL = "/static/img/avatar-placeholder.png"
+
+
+   def avatar_url_for(user) -> str:
+       cache_key = f"avatar:{user.pk}"
+       cached = cache.get(cache_key)
+       if cached:
+           return cached
+
+       try:
+           image = CloudflareImage.objects.filter(user=user, status="uploaded").first()
+           if image and image.is_uploaded:
+               url = image.public_url or image.get_variant_url("avatar")
+               cache.set(cache_key, url, timeout=300)
+               return url
+       except CloudflareImagesError:
+           # Cloudflare is degraded; serve the placeholder rather than
+           # blocking the page render. The next cache miss will retry.
+           pass
+
+       return PLACEHOLDER_URL
+
+
+Distributed processing pipeline
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For *write* paths (uploads, status checks, deletions), push the work
+through a task queue (Celery, RQ, Dramatiq) so the request handler
+returns quickly and retries happen out-of-band against Cloudflare:
+
+.. code-block:: python
+
+   # tasks.py
+   from celery import shared_task
+   from django_cloudflareimages_toolkit.services import cloudflare_service
+   from django_cloudflareimages_toolkit.exceptions import CloudflareImagesError
+
+   @shared_task(
+       bind=True,
+       autoretry_for=(CloudflareImagesError,),
+       retry_backoff=True,
+       retry_backoff_max=300,
+       retry_jitter=True,
+       max_retries=10,
+   )
+   def check_image_status_async(self, image_id: int) -> None:
+       from django_cloudflareimages_toolkit.models import CloudflareImage
+       image = CloudflareImage.objects.get(pk=image_id)
+       cloudflare_service.check_image_status(image)
+
+The view enqueues the task and returns immediately; the worker performs
+the polling with Celery's built-in retry backoff. If Cloudflare is down
+for an hour the tasks stay queued and resume on recovery instead of
+failing user-visible requests.
+
+
+Authorization: per-user image access + dynamic watermarking
+-----------------------------------------------------------
+
+The package's bundled viewsets default to ``IsAuthenticated`` and only
+list images belonging to ``request.user``. Production systems often need
+more: tenant-scoped sharing, viewer roles, expiring signed URLs, and
+watermarks that vary by who's looking. This is straightforward to layer
+on top of the existing primitives.
+
+
+Object-level permissions via DRF
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Subclass the bundled viewset and plug in a custom ``BasePermission``.
+The permission can consult Django groups, your own ``Tenant`` model, or
+any other context.
+
+.. code-block:: python
+
+   from rest_framework.permissions import BasePermission, IsAuthenticated
+   from django_cloudflareimages_toolkit.views import CloudflareImageViewSet
+
+   class CanAccessImage(BasePermission):
+       """RBAC: image owner OR member of an authorized viewer group."""
+
+       def has_permission(self, request, view) -> bool:
+           # Block bulk-listing endpoints to non-owners; the viewset's
+           # get_queryset already scopes to request.user, so this is
+           # belt-and-suspenders for any custom list views you add.
+           return request.user.is_authenticated
+
+       def has_object_permission(self, request, view, obj) -> bool:
+           if obj.user_id == request.user.id:
+               return True
+           # Group-based viewer role
+           if request.user.groups.filter(name="image_viewer").exists():
+               return True
+           # Tenant-scoped sharing (assumes obj.metadata holds {"tenant": ...})
+           tenant_id = (obj.metadata or {}).get("tenant")
+           if tenant_id and getattr(request.user, "tenant_id", None) == tenant_id:
+               return True
+           return False
+
+
+   class GovernedCloudflareImageViewSet(CloudflareImageViewSet):
+       permission_classes = [IsAuthenticated, CanAccessImage]
+
+
+Wire ``GovernedCloudflareImageViewSet`` into your URL conf instead of
+the default one. The viewset's ``get_queryset`` already restricts list
+results to the requesting user; the custom permission gates direct
+detail/update/delete attempts.
+
+
+Authorization middleware (alternative wiring)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If your access policy spans many endpoints (not just the bundled
+viewset), Django middleware can enforce it before the request even
+reaches a view:
+
+.. code-block:: python
+
+   import re
+   from django.http import JsonResponse
+
+   _IMAGE_PATH = re.compile(r"^/cloudflare-images/api/images/(?P<pk>\d+)/")
+
+
+   class CloudflareImageAccessMiddleware:
+       """Reject access to image detail routes the caller can't see."""
+
+       def __init__(self, get_response):
+           self.get_response = get_response
+
+       def __call__(self, request):
+           match = _IMAGE_PATH.match(request.path)
+           if not match or not request.user.is_authenticated:
+               return self.get_response(request)
+
+           from django_cloudflareimages_toolkit.models import CloudflareImage
+           pk = int(match.group("pk"))
+           try:
+               image = CloudflareImage.objects.only("user_id", "metadata").get(pk=pk)
+           except CloudflareImage.DoesNotExist:
+               return self.get_response(request)
+
+           if image.user_id == request.user.id:
+               return self.get_response(request)
+           if request.user.groups.filter(name="image_viewer").exists():
+               return self.get_response(request)
+           return JsonResponse({"detail": "Forbidden"}, status=403)
+
+
+   # settings.py
+   MIDDLEWARE = [
+       # ... your other middleware ...
+       "myapp.middleware.CloudflareImageAccessMiddleware",
+   ]
+
+The middleware is the right tool when authorization needs to apply to
+template views, HTMX partials, or other non-DRF surfaces alongside the
+JSON API. For pure DRF, the permission class above is lighter-weight.
+
+
+Dynamic watermarking based on user context
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Cloudflare Images supports watermark transformations natively
+(``draw=`` parameter). Use ``CloudflareImageTransform`` to build a URL
+that injects a watermark identifying the viewer — useful for leak-
+attribution on shared / paid content.
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit.transformations import (
+       CloudflareImageTransform,
+   )
+
+   ACCOUNT_HASH = "your-account-hash"
+   WATERMARK_IMAGE_ID = "static-watermark-asset-id"
+
+   def watermarked_url_for(image, viewer) -> str:
+       """Return a Cloudflare delivery URL with a viewer-specific
+       watermark drawn over the bottom-right corner."""
+       transform = (
+           CloudflareImageTransform()
+           .width(1600)
+           .quality(85)
+           .format("auto")
+           # `draw` overlays another Cloudflare-hosted image; use a
+           # per-tier watermark asset so paid users see a small,
+           # unobtrusive mark while free users see a larger one.
+           .draw(
+               WATERMARK_IMAGE_ID,
+               opacity=0.4 if viewer.is_premium else 0.7,
+               bottom=24,
+               right=24,
+               width=160 if viewer.is_premium else 240,
+           )
+       )
+       return transform.url(ACCOUNT_HASH, image.cloudflare_id, variant="public")
+
+
+For text watermarks (e.g. ``"shared by {viewer.email} on {date}"``), pre-
+render them as transparent PNGs and upload them as Cloudflare Images
+once; reference them in ``draw`` by ``cloudflare_id`` as above. The
+toolkit does **not** render text watermarks server-side; Cloudflare's
+``draw`` transformation expects an existing image asset.
+
+
+Combining all three: signed + scoped + watermarked URLs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For shared previews that should expire and that identify the viewer:
+
+.. code-block:: python
+
+   def shared_preview_url(image: "CloudflareImage", viewer) -> str:
+       # 1. Verify access (raise PermissionDenied if not allowed)
+       check_can_view(image, viewer)
+
+       # 2. Get a signed, short-lived URL for the base image
+       base_url = image.get_signed_url(variant="public", expiry=300)
+
+       # 3. Layer the watermark transformation on top
+       return watermarked_url_for(image, viewer)
+
+You can combine signed URLs with transformations because Cloudflare
+Images applies transformations on the signed delivery URL before
+verifying the signature. Test in your environment that your signed-URL
+expiry matches the cache TTL you're handing to clients.
