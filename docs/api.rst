@@ -17,6 +17,7 @@ get_direct_upload_url Method
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. automethod:: django_cloudflareimages_toolkit.services.CloudflareImagesService.get_direct_upload_url
+   :no-index:
 
 **Parameters:**
 
@@ -46,6 +47,7 @@ list_images Method
 ~~~~~~~~~~~~~~~~~~
 
 .. automethod:: django_cloudflareimages_toolkit.services.CloudflareImagesService.list_images
+   :no-index:
 
 **Parameters:**
 
@@ -66,6 +68,7 @@ get_image Method
 ~~~~~~~~~~~~~~~~
 
 .. automethod:: django_cloudflareimages_toolkit.services.CloudflareImagesService.get_image
+   :no-index:
 
 **Parameters:**
 
@@ -84,6 +87,7 @@ delete_image Method
 ~~~~~~~~~~~~~~~~~~~
 
 .. automethod:: django_cloudflareimages_toolkit.services.CloudflareImagesService.delete_image
+   :no-index:
 
 **Parameters:**
 
@@ -103,6 +107,7 @@ update_image Method
 ~~~~~~~~~~~~~~~~~~~
 
 .. automethod:: django_cloudflareimages_toolkit.services.CloudflareImagesService.update_image
+   :no-index:
 
 **Parameters:**
 
@@ -152,6 +157,7 @@ get_url Method
 ~~~~~~~~~~~~~~
 
 .. automethod:: django_cloudflareimages_toolkit.models.CloudflareImage.get_url
+   :no-index:
 
 **Parameters:**
 
@@ -171,6 +177,7 @@ get_variant_url Method
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. automethod:: django_cloudflareimages_toolkit.models.CloudflareImage.get_variant_url
+   :no-index:
 
 **Parameters:**
 
@@ -199,6 +206,7 @@ get_signed_url Method
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. automethod:: django_cloudflareimages_toolkit.models.CloudflareImage.get_signed_url
+   :no-index:
 
 **Parameters:**
 
@@ -217,7 +225,8 @@ get_signed_url Method
 is_expired Property
 ~~~~~~~~~~~~~~~~~~~
 
-.. automethod:: django_cloudflareimages_toolkit.models.CloudflareImage.is_expired
+.. autoattribute:: django_cloudflareimages_toolkit.models.CloudflareImage.is_expired
+   :no-index:
 
 **Returns:** bool - True if upload URL has expired
 
@@ -312,15 +321,22 @@ Django admin interface for managing Cloudflare Images.
 Webhook Views
 -------------
 
-.. autofunction:: django_cloudflareimages_toolkit.views.cloudflare_webhook
+.. autoclass:: django_cloudflareimages_toolkit.views.WebhookView
+   :members:
+   :show-inheritance:
 
-Handles Cloudflare Images webhook notifications.
+Handles Cloudflare Images webhook notifications. CSRF-exempt at the
+view layer; security is enforced via HMAC signature verification when
+``CLOUDFLARE_IMAGES["WEBHOOK_SECRET"]`` is configured. See
+:doc:`webhooks` for the full status-code matrix.
 
 **URL Pattern:**
 
 .. code-block:: python
 
-   path('webhook/', cloudflare_webhook, name='cloudflare_webhook')
+   from django_cloudflareimages_toolkit.views import WebhookView
+
+   path('webhook/', WebhookView.as_view(), name='webhook')
 
 **Webhook Events:**
 
@@ -370,7 +386,7 @@ Cleans up expired upload URLs and unused images.
 App Configuration
 -----------------
 
-.. autoclass:: django_cloudflareimages_toolkit.apps.DjangoCloudflareimagesToolkitConfig
+.. autoclass:: django_cloudflareimages_toolkit.apps.CloudflareImagesConfig
    :members:
    :undoc-members:
    :show-inheritance:
@@ -456,95 +472,100 @@ Raised when image data validation fails.
    except ValidationError as e:
        print(f"Validation error: {e}")
 
-Utility Functions
------------------
+Utility APIs
+------------
+
+There is no separate ``utils`` module. The utility-style operations
+live as methods on the service singleton and the ``CloudflareImage``
+model, plus the standalone ``CloudflareImageTransform`` class for URL
+construction.
 
 Image URL Generation
 ~~~~~~~~~~~~~~~~~~~~
 
-.. autofunction:: django_cloudflareimages_toolkit.utils.generate_image_url
-
-Generates Cloudflare Images URL.
-
-**Parameters:**
-
-* ``account_hash`` (str): Cloudflare account hash
-* ``image_id`` (str): Image ID
-* ``variant`` (str, optional): Variant name (default: 'public')
-
-**Returns:** str - Full image URL
-
-**Example:**
+URL generation is a *method on the model*, not a freestanding function.
+Use :meth:`~django_cloudflareimages_toolkit.models.CloudflareImage.get_url`
+for the default variant or
+:meth:`~django_cloudflareimages_toolkit.models.CloudflareImage.get_variant_url`
+to select one.
 
 .. code-block:: python
 
-   from django_cloudflareimages_toolkit.utils import generate_image_url
-   
-   url = generate_image_url('account-hash', 'image-id', 'thumbnail')
+   image = CloudflareImage.objects.get(cloudflare_id='abc123')
+   url = image.get_variant_url('thumbnail')
+
+For transformation URLs (resize, crop, format, watermark) without a
+``CloudflareImage`` instance, use the standalone builder
+:class:`~django_cloudflareimages_toolkit.transformations.CloudflareImageTransform`:
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit.transformations import (
+       CloudflareImageTransform,
+   )
+
+   url = (
+       CloudflareImageTransform()
+       .width(400)
+       .height(300)
+       .format("auto")
+       .quality(85)
+       .url(account_hash="your-hash", image_id="abc123", variant="public")
+   )
+
+See :doc:`patterns` for a watermarking recipe that composes
+``CloudflareImageTransform.draw()`` with viewer-specific parameters.
 
 Signed URL Generation
 ~~~~~~~~~~~~~~~~~~~~~
 
-.. autofunction:: django_cloudflareimages_toolkit.utils.generate_signed_url
-
-Generates signed URL for private images.
-
-**Parameters:**
-
-* ``base_url`` (str): Base image URL
-* ``signing_key`` (str): URL signing key
-* ``expiry`` (int, optional): Expiry time in seconds
-
-**Returns:** str - Signed URL
-
-**Example:**
+Signed URLs are produced by
+:meth:`~django_cloudflareimages_toolkit.models.CloudflareImage.get_signed_url`
+when ``require_signed_urls=True`` on the model row:
 
 .. code-block:: python
 
-   from django_cloudflareimages_toolkit.utils import generate_signed_url
-   
-   signed_url = generate_signed_url(base_url, signing_key, expiry=3600)
+   image = CloudflareImage.objects.get(cloudflare_id='abc123')
+   signed_url = image.get_signed_url(variant="public", expiry=3600)
+
+Returns ``None`` if the image isn't uploaded yet or signed URLs are
+disabled for that row.
 
 Configuration Helpers
 ~~~~~~~~~~~~~~~~~~~~~
 
-.. autofunction:: django_cloudflareimages_toolkit.utils.get_cloudflare_config
-
-Retrieves Cloudflare Images configuration from Django settings.
-
-**Returns:** dict - Configuration dictionary
-
-**Example:**
+Read settings via the ``cloudflare_settings`` proxy instead of
+indexing ``settings.CLOUDFLARE_IMAGES`` directly. The proxy validates
+required keys (``ACCOUNT_ID``, ``API_TOKEN``) on access and exposes
+documented defaults for everything else.
 
 .. code-block:: python
 
-   from django_cloudflareimages_toolkit.utils import get_cloudflare_config
-   
-   config = get_cloudflare_config()
-   print(f"Account ID: {config['ACCOUNT_ID']}")
+   from django_cloudflareimages_toolkit.settings import cloudflare_settings
 
-Webhook Verification
-~~~~~~~~~~~~~~~~~~~~
+   print(cloudflare_settings.account_id)
+   print(cloudflare_settings.default_expiry_minutes)
+   secret = cloudflare_settings.webhook_secret  # may be None
 
-.. autofunction:: django_cloudflareimages_toolkit.utils.verify_webhook_signature
+Webhook Signature Verification
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Verifies Cloudflare webhook signature.
-
-**Parameters:**
-
-* ``payload`` (bytes): Webhook payload
-* ``signature`` (str): Webhook signature header
-* ``secret`` (str): Webhook secret
-
-**Returns:** bool - True if signature is valid
-
-**Example:**
+Signature verification is wired into :class:`WebhookView` and runs
+automatically when a secret is configured. If you need to verify a
+signature outside the bundled view (e.g. inside a Celery task or a
+custom endpoint), call the service directly:
 
 .. code-block:: python
 
-   from django_cloudflareimages_toolkit.utils import verify_webhook_signature
-   
-   is_valid = verify_webhook_signature(request.body, signature, secret)
+   from django_cloudflareimages_toolkit.services import cloudflare_service
+
+   ok = cloudflare_service.validate_webhook_signature(
+       request.body, signature_header
+   )
+
+Returns ``True`` only when the HMAC matches. Callers that need strict
+enforcement should check the secret first or use :class:`WebhookView`,
+which encodes the right policy.
 
 Constants and Settings
 ----------------------
