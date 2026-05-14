@@ -15,7 +15,7 @@ jobs:
         django-version: [4.2, 5.0, 5.1]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install uv
       uses: astral-sh/setup-uv@v4
@@ -103,7 +103,7 @@ jobs:
       contents: write  # Allow pushing changes
       pull-requests: write  # Allow commenting on PRs
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
 
