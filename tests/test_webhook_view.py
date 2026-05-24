@@ -35,7 +35,6 @@ from rest_framework import status
 
 from django_cloudflareimages_toolkit.settings import cloudflare_settings
 
-
 WEBHOOK_URL = "/cloudflare-images/api/webhook/"
 SECRET = "test-webhook-secret"
 
