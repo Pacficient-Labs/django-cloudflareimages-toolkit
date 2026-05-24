@@ -10,7 +10,7 @@ import json
 from django.contrib import admin
 from django.urls import reverse
 from django.utils import timezone
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
 
 from .exceptions import CloudflareImagesError
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
@@ -222,9 +222,9 @@ class CloudflareImageAdmin(admin.ModelAdmin):
     def is_expired_display(self, obj):
         """Display expiry status with icon."""
         if obj.is_expired:
-            return format_html('<span style="color: #dc3545;">🔴 Expired</span>')
+            return format_html('<span style="color: #dc3545;">{}</span>', "🔴 Expired")
         else:
-            return format_html('<span style="color: #28a745;">🟢 Valid</span>')
+            return format_html('<span style="color: #28a745;">{}</span>', "🟢 Valid")
 
     is_expired_display.short_description = "Expiry Status"
 
@@ -260,7 +260,11 @@ class CloudflareImageAdmin(admin.ModelAdmin):
                 )
             )
 
-        return format_html(" | ".join(actions)) if actions else "-"
+        return (
+            format_html_join(" | ", "{}", ((action,) for action in actions))
+            if actions
+            else "-"
+        )
 
     actions_display.short_description = "Actions"
 
@@ -275,7 +279,7 @@ class CloudflareImageAdmin(admin.ModelAdmin):
                 obj.upload_url,
             )
         elif obj.is_expired:
-            return format_html('<span style="color: #dc3545;">Expired</span>')
+            return format_html('<span style="color: #dc3545;">{}</span>', "Expired")
         return "-"
 
     upload_url_display.short_description = "Upload URL"
