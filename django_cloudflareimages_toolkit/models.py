@@ -87,6 +87,8 @@ class CloudflareImage(models.Model):
     @property
     def is_expired(self) -> bool:
         """Check if the upload URL has expired."""
+        if self.expires_at is None:
+            return False
         return timezone.now() > self.expires_at
 
     @property
