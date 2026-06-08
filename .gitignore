@@ -296,3 +296,4 @@ WEBHOOK_SETUP.md
 
 # AI Assistant files
 CLAUDE.md
+.claude/settings.local.json
