@@ -179,14 +179,20 @@ class CreateUploadURLView(APIView):
         serializer = ImageUploadRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        # ``filename`` is not a create_direct_upload_url() argument; it is
+        # handled separately below. Pop it out before unpacking so passing it
+        # through never raises an unexpected-keyword TypeError.
+        params = dict(serializer.validated_data)
+        filename = params.pop("filename", None)
+
         try:
             image = cloudflare_service.create_direct_upload_url(
-                user=request.user, **serializer.validated_data
+                user=request.user, **params
             )
 
             # Update filename if provided
-            if "filename" in serializer.validated_data:
-                image.original_filename = serializer.validated_data["filename"]
+            if filename is not None:
+                image.original_filename = filename
                 image.save()
 
             response_serializer = ImageUploadResponseSerializer(

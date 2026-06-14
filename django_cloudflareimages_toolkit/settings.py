@@ -5,7 +5,11 @@ This module contains the configuration settings needed for the
 Cloudflare Images integration.
 """
 
+from collections.abc import Callable
+from typing import Any
+
 from django.conf import settings
+from django.utils.module_loading import import_string
 
 
 class CloudflareImagesSettings:
@@ -62,6 +66,55 @@ class CloudflareImagesSettings:
     def require_signed_urls(self) -> bool:
         """Whether to require signed URLs by default."""
         return self._settings.get("REQUIRE_SIGNED_URLS", True)
+
+    @property
+    def default_metadata(self) -> dict:
+        """
+        Default metadata merged into every direct upload request.
+
+        Per-request metadata keys take precedence over these defaults.
+        """
+        return self._settings.get("DEFAULT_METADATA", {})
+
+    @property
+    def default_creator(self) -> str | None:
+        """
+        Default Cloudflare ``creator`` value for direct uploads.
+
+        Per-request ``creator`` values take precedence over this default.
+        """
+        return self._settings.get("DEFAULT_CREATOR")
+
+    @property
+    def metadata_factory(self) -> Any:
+        """
+        Configured metadata factory, or ``None``.
+
+        May be a dotted import path to a callable/class, a class object, an
+        instance, or any plain callable. Use :meth:`get_metadata_factory` to
+        resolve it to a ready-to-call object.
+        """
+        return self._settings.get("METADATA_FACTORY")
+
+    def get_metadata_factory(self) -> Callable[..., dict] | None:
+        """
+        Resolve ``METADATA_FACTORY`` to a callable, or return ``None``.
+
+        Dotted-path strings are imported, classes are instantiated, and plain
+        callables/instances are returned as-is.
+        """
+        factory = self.metadata_factory
+        if factory is None:
+            return None
+        if isinstance(factory, str):
+            factory = import_string(factory)
+        if isinstance(factory, type):
+            factory = factory()
+        if not callable(factory):
+            raise ValueError(
+                "CLOUDFLARE_IMAGES['METADATA_FACTORY'] must resolve to a callable"
+            )
+        return factory
 
     @property
     def webhook_secret(self) -> str | None:

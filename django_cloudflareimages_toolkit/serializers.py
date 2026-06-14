@@ -36,6 +36,11 @@ class ImageUploadRequestSerializer(serializers.Serializer):
     filename = serializers.CharField(
         max_length=255, required=False, help_text="Original filename for reference"
     )
+    creator = serializers.CharField(
+        max_length=1024,
+        required=False,
+        help_text="Cloudflare creator value to associate with the image",
+    )
 
     def validate_custom_id(self, value: str) -> str:
         """Validate custom ID format."""

@@ -5,10 +5,11 @@ A comprehensive Django toolkit that provides secure image upload functionality,
 transformations, and management using Cloudflare Images.
 """
 
-__version__ = "1.0.14"
+__version__ = "1.1.0"
 __author__ = "PacNPal"
 
-# Always import transformation utilities (Django-independent)
+# Always import Django-independent utilities
+from .metadata import ImageMetadataFactory
 from .transformations import (
     CloudflareImageTransform,
     CloudflareImageUtils,
@@ -36,6 +37,7 @@ def __getattr__(name):
         "ValidationError": (".exceptions", "ValidationError"),
         "UploadError": (".exceptions", "UploadError"),
         "ImageNotFoundError": (".exceptions", "ImageNotFoundError"),
+        "ImageNotReadyError": (".exceptions", "ImageNotReadyError"),
     }
 
     if name in django_components:
@@ -53,6 +55,7 @@ __all__ = [
     "CloudflareImageTransform",
     "CloudflareImageVariants",
     "CloudflareImageUtils",
+    "ImageMetadataFactory",
     "CloudflareImage",
     "ImageUploadLog",
     "ImageUploadStatus",
@@ -65,4 +68,5 @@ __all__ = [
     "ValidationError",
     "UploadError",
     "ImageNotFoundError",
+    "ImageNotReadyError",
 ]

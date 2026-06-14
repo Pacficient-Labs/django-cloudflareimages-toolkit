@@ -25,8 +25,41 @@ class ImageUploadStatus(models.TextChoices):
     EXPIRED = "expired", "Expired"
 
 
+class CloudflareImageManager(models.Manager):
+    """Manager exposing safe, first-class helpers for CloudflareImage."""
+
+    def register_uploaded(self, cloudflare_id: str, user=None) -> "CloudflareImage":
+        """
+        Safely register an already-uploaded image by its ``cloudflare_id``.
+
+        Unlike ``get_or_create(cloudflare_id=...)`` with a client-supplied ID,
+        this verifies the image against Cloudflare first: it confirms the image
+        exists and that its draft state is cleared (bytes actually uploaded)
+        before creating/returning the local record, then populates status,
+        variants, and metadata from the Cloudflare response.
+
+        Args:
+            cloudflare_id: The Cloudflare image ID reported by the client.
+            user: Django user to associate with the image (optional).
+
+        Returns:
+            The created or updated CloudflareImage instance.
+
+        Raises:
+            ImageNotFoundError: If the image does not exist in Cloudflare.
+            ImageNotReadyError: If the image exists but is still a draft.
+            CloudflareImagesError: For other Cloudflare API failures.
+        """
+        # Imported lazily to avoid a circular import (services imports models).
+        from .services import cloudflare_service
+
+        return cloudflare_service.register_uploaded_image(cloudflare_id, user=user)
+
+
 class CloudflareImage(models.Model):
     """Model to track Cloudflare image uploads."""
+
+    objects = CloudflareImageManager()
 
     # Primary identifiers
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -56,6 +89,9 @@ class CloudflareImage(models.Model):
     # Cloudflare settings
     require_signed_urls = models.BooleanField(default=True)
     metadata = models.JSONField(default=dict, blank=True)
+    # Cloudflare "creator" field: associates the image with a creator/user.
+    # Indexed so records can be queried by creator from Django.
+    creator = models.CharField(max_length=1024, blank=True, db_index=True)
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -191,8 +227,18 @@ class CloudflareImage(models.Model):
         if "variants" in response_data:
             self.variants = response_data["variants"]
 
+        # Cloudflare returns image metadata under "meta"; webhook payloads in
+        # this toolkit use "metadata". Accept either, preferring "metadata".
         if "metadata" in response_data:
             self.cloudflare_metadata = response_data["metadata"]
+        elif "meta" in response_data:
+            self.cloudflare_metadata = response_data["meta"]
+
+        if response_data.get("creator"):
+            self.creator = response_data["creator"]
+
+        if response_data.get("filename"):
+            self.filename = response_data["filename"]
 
         # Update image dimensions and format if available
         if "width" in response_data:

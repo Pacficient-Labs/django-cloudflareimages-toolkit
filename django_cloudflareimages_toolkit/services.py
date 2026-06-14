@@ -16,6 +16,8 @@ from django.utils import timezone
 
 from .exceptions import (
     CloudflareImagesError,
+    ImageNotFoundError,
+    ImageNotReadyError,
 )
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
 from .settings import cloudflare_settings
@@ -69,6 +71,7 @@ class CloudflareImagesService:
         metadata: dict[str, Any] | None = None,
         require_signed_urls: bool | None = None,
         expiry_minutes: int | None = None,
+        creator: str | None = None,
     ) -> dict[str, str]:
         """
         Get a one-time upload URL for direct creator upload.
@@ -82,6 +85,7 @@ class CloudflareImagesService:
             metadata=metadata,
             require_signed_urls=require_signed_urls,
             expiry_minutes=expiry_minutes,
+            creator=creator,
         )
         return {"id": image.cloudflare_id, "uploadURL": image.upload_url}
 
@@ -92,9 +96,15 @@ class CloudflareImagesService:
         metadata: dict[str, Any] | None = None,
         require_signed_urls: bool | None = None,
         expiry_minutes: int | None = None,
+        creator: str | None = None,
     ) -> CloudflareImage:
         """
         Create a one-time upload URL for direct creator upload.
+
+        Settings-backed defaults are applied for any argument left as ``None``:
+        ``require_signed_urls`` and ``expiry_minutes`` from their respective
+        settings, ``creator`` from ``DEFAULT_CREATOR``, and ``metadata`` is
+        merged on top of ``DEFAULT_METADATA`` (per-request keys win).
 
         Args:
             user: Django user instance (optional)
@@ -102,6 +112,7 @@ class CloudflareImagesService:
             metadata: Additional metadata to store with the image
             require_signed_urls: Whether to require signed URLs
             expiry_minutes: Minutes until the upload URL expires
+            creator: Cloudflare ``creator`` value to associate with the image
 
         Returns:
             CloudflareImage instance with upload URL
@@ -115,8 +126,28 @@ class CloudflareImagesService:
         if expiry_minutes is None:
             expiry_minutes = cloudflare_settings.default_expiry_minutes
 
-        if metadata is None:
-            metadata = {}
+        # Merge per-request metadata on top of the configured defaults so that
+        # per-request keys take precedence over DEFAULT_METADATA.
+        metadata = {**cloudflare_settings.default_metadata, **(metadata or {})}
+
+        if creator is None:
+            creator = cloudflare_settings.default_creator
+
+        # Give a configured metadata factory the final say. As trusted
+        # server-side code it may augment or override the resolved metadata.
+        # Precedence: DEFAULT_METADATA < per-request metadata < factory output.
+        factory = cloudflare_settings.get_metadata_factory()
+        if factory is not None:
+            metadata = factory(
+                metadata=metadata,
+                user=user,
+                custom_id=custom_id,
+                creator=creator,
+            )
+            if not isinstance(metadata, dict):
+                raise CloudflareImagesError(
+                    "METADATA_FACTORY must return a dict of metadata"
+                )
 
         # Calculate expiry time (must be 2 min to 6 hours in the future per API docs)
         expiry_minutes = max(2, min(expiry_minutes, 360))
@@ -131,6 +162,9 @@ class CloudflareImagesService:
 
         if custom_id:
             form_data["id"] = custom_id
+
+        if creator:
+            form_data["creator"] = creator
 
         # Make API request
         url = f"{self.base_url}/accounts/{self.account_id}/images/v2/direct_upload"
@@ -164,6 +198,7 @@ class CloudflareImagesService:
                 status=ImageUploadStatus.PENDING,
                 require_signed_urls=require_signed_urls,
                 metadata=metadata,
+                creator=creator or "",
                 expires_at=expires_at,
             )
 
@@ -316,8 +351,94 @@ class CloudflareImagesService:
             return data
 
         except requests.RequestException as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            if status_code == 404:
+                # A missing image is a distinct, typed error so callers can
+                # react to it specifically. ImageNotFoundError subclasses
+                # CloudflareImagesError, so existing ``except`` blocks still match.
+                logger.warning(f"Image {image_id} not found in Cloudflare")
+                raise ImageNotFoundError(
+                    f"Image {image_id} not found in Cloudflare",
+                    status_code=404,
+                ) from e
             logger.error(f"Failed to get image {image_id}: {str(e)}")
             raise CloudflareImagesError(f"Failed to get image: {str(e)}") from e
+
+    def register_uploaded_image(self, cloudflare_id: str, user=None) -> CloudflareImage:
+        """
+        Verify an uploaded image against Cloudflare and persist it locally.
+
+        This is the safe alternative to ``CloudflareImage.objects.get_or_create(
+        cloudflare_id=<client-supplied id>)``: it fetches the image details from
+        Cloudflare, confirms the image exists and that its draft state is
+        cleared (bytes were actually uploaded), and only then creates/returns
+        the local record with status, variants, and metadata populated from the
+        Cloudflare response.
+
+        Args:
+            cloudflare_id: The Cloudflare image ID reported by the client.
+            user: Django user to associate with the image (optional).
+
+        Returns:
+            The created or updated CloudflareImage instance.
+
+        Raises:
+            ImageNotFoundError: If the image does not exist in Cloudflare.
+            ImageNotReadyError: If the image exists but is still a draft.
+            CloudflareImagesError: For other Cloudflare API failures.
+        """
+        # Raises ImageNotFoundError if the image does not exist in Cloudflare.
+        data = self.get_image(cloudflare_id)
+        result = data["result"]
+
+        # A draft image means the upload URL was created but no bytes have been
+        # uploaded yet. Refuse to register it -- do not create a local row.
+        if result.get("draft"):
+            logger.warning(
+                f"Refusing to register draft image {cloudflare_id}: upload incomplete"
+            )
+            raise ImageNotReadyError(
+                f"Image {cloudflare_id} is still a draft (upload not completed)"
+            )
+
+        image, created = CloudflareImage.objects.get_or_create(
+            cloudflare_id=cloudflare_id,
+            defaults={
+                "user": user,
+                "upload_url": "",
+                "status": ImageUploadStatus.UPLOADED,
+                "require_signed_urls": result.get(
+                    "requireSignedURLs", cloudflare_settings.require_signed_urls
+                ),
+                # The upload URL has already been consumed; record "now" so the
+                # required expires_at field is populated for registered images.
+                "expires_at": timezone.now(),
+            },
+        )
+
+        # Associate the user on pre-existing rows that don't have one yet.
+        if user is not None and image.user_id is None:
+            image.user = user
+            image.save(update_fields=["user"])
+
+        # Populate status, variants, metadata, creator and filename from CF.
+        image.update_from_cloudflare_response(result)
+
+        ImageUploadLog.objects.create(
+            image=image,
+            event_type="image_registered",
+            message=(
+                "Image registered from Cloudflare"
+                if created
+                else "Existing image refreshed during registration"
+            ),
+            data={"response": result},
+        )
+
+        logger.info(
+            f"Registered uploaded image {image.cloudflare_id} (created={created})"
+        )
+        return image
 
     def update_image(
         self,
