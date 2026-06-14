@@ -43,6 +43,9 @@ CLOUDFLARE_IMAGES = {
     'API_TOKEN': 'your-cloudflare-api-token',
     'DEFAULT_EXPIRY_MINUTES': 30,
     'REQUIRE_SIGNED_URLS': True,
+    'DEFAULT_METADATA': {},          # merged under per-request metadata (per-request wins)
+    'DEFAULT_CREATOR': None,         # default Cloudflare "creator" value
+    'METADATA_FACTORY': None,        # dotted path to an ImageMetadataFactory (optional)
     'WEBHOOK_SECRET': 'your-webhook-secret',
     'MAX_FILE_SIZE_MB': 10,
 }
@@ -52,10 +55,12 @@ Use the service:
 ```python
 from django_cloudflareimages_toolkit.services import cloudflare_service
 
-# Create direct upload URL
+# Create direct upload URL (per-request args override the settings defaults).
+# The resolved metadata + creator are sent to Cloudflare and stored on the row.
 image = cloudflare_service.create_direct_upload_url(
     user=request.user,
     metadata={'type': 'avatar', 'user_id': '123'},
+    creator='user-123',
     require_signed_urls=True,
     expiry_minutes=60
 )
@@ -63,6 +68,35 @@ image = cloudflare_service.create_direct_upload_url(
 # Use transformations
 from django_cloudflareimages_toolkit.transformations import CloudflareImageVariants
 thumbnail_url = CloudflareImageVariants.thumbnail(image.public_url, 200)
+```
+
+Safely register a client-supplied Cloudflare ID (verifies it against Cloudflare
+first; raw `get_or_create(cloudflare_id=...)` is unsafe):
+```python
+from django_cloudflareimages_toolkit import (
+    CloudflareImage, ImageNotFoundError, ImageNotReadyError,
+)
+
+try:
+    image = CloudflareImage.objects.register_uploaded(cloudflare_id, user=request.user)
+except ImageNotFoundError:
+    ...  # not in Cloudflare
+except ImageNotReadyError:
+    ...  # still a draft (upload not completed)
+# Optional ownership gate: pass expected_creator=str(request.user.pk) to require the
+# Cloudflare creator to match (raises ImageOwnershipError before any row is created).
+```
+
+Programmatic metadata via a factory (precedence: DEFAULT_METADATA < per-request
+metadata < factory output):
+```python
+from django_cloudflareimages_toolkit import ImageMetadataFactory
+
+class TenantMetadataFactory(ImageMetadataFactory):
+    def get_metadata(self, *, metadata, user=None, **context):
+        metadata['source'] = 'web'
+        return metadata
+# settings: CLOUDFLARE_IMAGES['METADATA_FACTORY'] = 'myapp.factories.TenantMetadataFactory'
 ```
 
 Use in templates:

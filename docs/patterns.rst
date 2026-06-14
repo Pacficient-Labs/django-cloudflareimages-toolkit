@@ -348,6 +348,55 @@ Key behaviors:
   operators see how many uploads stalled at each step (a useful
   signal for a Cloudflare degradation dashboard).
 
+Safely registering a client-supplied cloudflare_id
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When a browser uploads directly to Cloudflare and then reports the
+``cloudflare_id`` back to your server, treat that id as untrusted input. It
+may not exist, may still be a draft, or may belong to another user — and
+calling ``CloudflareImage.objects.get_or_create(cloudflare_id=<client value>)``
+directly leaves a bare local row that does not correspond to a real image.
+
+Use ``CloudflareImage.objects.register_uploaded`` instead. It fetches the
+image from Cloudflare, confirms it exists and that its draft state is
+cleared, then creates (or returns) the local record populated with status,
+variants, metadata, and creator. On failure it raises before any local row
+is created.
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import (
+       CloudflareImage, ImageNotFoundError, ImageNotReadyError,
+   )
+
+   try:
+       image = CloudflareImage.objects.register_uploaded(
+           cloudflare_id, user=request.user
+       )
+   except ImageNotFoundError:
+       ...  # id does not exist in Cloudflare
+   except ImageNotReadyError:
+       ...  # exists but upload not completed (still a draft)
+
+When you tag uploads with ``creator``, pass ``expected_creator`` to enforce
+ownership — the Cloudflare ``creator`` must match or ``ImageOwnershipError`` is
+raised before any row is created:
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import ImageOwnershipError
+
+   try:
+       image = CloudflareImage.objects.register_uploaded(
+           cloudflare_id, user=request.user, expected_creator=str(request.user.pk)
+       )
+   except ImageOwnershipError:
+       ...  # the id belongs to a different creator
+
+Because ``register_uploaded`` makes a synchronous call to Cloudflare, it is
+a natural fit for the retry and circuit-breaker wrappers above when the id
+is registered from a hot request path.
+
 Distributed processing pipeline
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

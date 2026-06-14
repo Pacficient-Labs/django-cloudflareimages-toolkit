@@ -86,3 +86,25 @@ class ImageNotFoundError(CloudflareImagesError):
     """
 
     pass
+
+
+class ImageNotReadyError(CloudflareImagesError):
+    """
+    Exception raised when an image exists but is not ready to be registered.
+
+    This is raised when the image is still a draft -- the upload URL was
+    created but no bytes have been uploaded yet, so Cloudflare still reports
+    ``draft`` as ``True``. It signals that the ``cloudflare_id`` is real but
+    the upload has not completed, so it must not be trusted as finished.
+    """
+
+
+class ImageOwnershipError(CloudflareImagesError):
+    """
+    Exception raised when a registered image's creator does not match.
+
+    This is raised by ``register_uploaded`` when an ``expected_creator`` is
+    supplied and the Cloudflare ``creator`` on the image does not equal it. It
+    guards against a caller registering another user's completed image by
+    submitting an arbitrary ``cloudflare_id`` from the same account.
+    """

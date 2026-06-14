@@ -14,6 +14,7 @@ from django_cloudflareimages_toolkit import (
     CloudflareImageTransform,
     CloudflareImageVariants,
     CloudflareImageUtils,
+    ImageMetadataFactory,
     CloudflareImage,
     ImageUploadLog,
     ImageUploadStatus,
@@ -26,19 +27,47 @@ from django_cloudflareimages_toolkit import (
     ValidationError,
     UploadError,
     ImageNotFoundError,
+    ImageNotReadyError,
+    ImageOwnershipError,
 )
 ```
 
 Top-level metadata:
 
 ```python
-__version__ = "1.0.13"
+__version__ = "1.1.0"
 __author__ = "PacNPal"
 ```
 
+## `ImageMetadataFactory`
+
+Source file: `django_cloudflareimages_toolkit/metadata.py`
+
+Base class for building upload metadata programmatically. Subclass it and point
+`CLOUDFLARE_IMAGES["METADATA_FACTORY"]` at the subclass (a dotted path, class,
+instance, or any callable). It receives the already-resolved metadata
+(`DEFAULT_METADATA` merged with the per-request metadata) plus upload context and
+returns the final metadata dict sent to Cloudflare and persisted. As trusted
+server-side code it has the final say (precedence:
+`DEFAULT_METADATA` < per-request metadata < factory output).
+
+```python
+from django_cloudflareimages_toolkit import ImageMetadataFactory
+
+class TenantMetadataFactory(ImageMetadataFactory):
+    def get_metadata(self, *, metadata, user=None, custom_id=None, creator=None, **context):
+        if user is not None:
+            metadata["uploaded_by"] = str(user.pk)
+        metadata["source"] = "web"
+        return metadata
+```
+
+Instances are callable (`__call__` delegates to `get_metadata`). It is
+Django-independent and exported eagerly from the package root.
+
 ## Lazy Import Contract
 
-`CloudflareImageTransform`, `CloudflareImageVariants`, and `CloudflareImageUtils` are imported directly because they do not depend on Django settings or the ORM. Everything else is mapped by name in `__getattr__`:
+`CloudflareImageTransform`, `CloudflareImageVariants`, `CloudflareImageUtils`, and `ImageMetadataFactory` are imported directly because they do not depend on Django settings or the ORM. Everything else is mapped by name in `__getattr__`:
 
 ```python
 def __getattr__(name):

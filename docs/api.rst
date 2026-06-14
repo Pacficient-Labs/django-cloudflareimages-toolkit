@@ -23,6 +23,10 @@ get_direct_upload_url Method
 
 * ``metadata`` (dict, optional): Custom metadata to attach to the image
 * ``require_signed_urls`` (bool, optional): Whether to require signed URLs for access
+* ``creator`` (str, optional): Cloudflare "creator" value to associate with the upload
+
+Any argument left as ``None`` falls back to its settings default
+(``DEFAULT_METADATA``, ``REQUIRE_SIGNED_URLS``, ``DEFAULT_CREATOR``).
 
 **Returns:** dict with 'id' and 'uploadURL' keys
 
@@ -75,6 +79,10 @@ get_image Method
 * ``image_id`` (str, required): Cloudflare image ID
 
 **Returns:** dict with image details
+
+**Raises:**
+
+* ``ImageNotFoundError``: When Cloudflare returns a 404 for the image ID
 
 **Example:**
 
@@ -147,6 +155,7 @@ Django model for tracking Cloudflare Images.
 * ``format`` (CharField): Image format (jpeg, png, gif, webp) (max 10 characters)
 * ``variants`` (JSONField): Available image variants
 * ``metadata`` (JSONField): Custom metadata
+* ``creator`` (CharField): Cloudflare "creator" value, indexed and queryable (max 255 characters, blank allowed)
 * ``is_ready`` (BooleanField): Whether image processing is complete
 * ``upload_url`` (URLField): Direct upload URL (temporary)
 * ``upload_expires_at`` (DateTimeField): When upload URL expires
@@ -236,6 +245,105 @@ is_expired Property
 
    if image.is_expired:
        print("Upload URL has expired")
+
+Manager Methods
+~~~~~~~~~~~~~~~
+
+register_uploaded Method
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. automethod:: django_cloudflareimages_toolkit.models.CloudflareImage.objects.register_uploaded
+   :no-index:
+
+Safely registers a client-supplied ``cloudflare_id``. The manager fetches
+the image from Cloudflare, confirms it exists and that its draft state is
+cleared, then creates (or returns) the local record populated with status,
+variants, metadata, and creator. No local row is created on failure.
+
+**Parameters:**
+
+* ``cloudflare_id`` (str, required): Cloudflare image ID reported by the client
+* ``user`` (optional): User to associate with the local record
+* ``expected_creator`` (str, optional): When given, the Cloudflare ``creator``
+  must equal it or ``ImageOwnershipError`` is raised before any row is created
+
+**Returns:** ``CloudflareImage`` - The created or existing local record
+
+**Raises:**
+
+* ``ImageNotFoundError``: When the image does not exist in Cloudflare
+* ``ImageNotReadyError``: When the image exists but is still a draft
+* ``ImageOwnershipError``: When ``expected_creator`` does not match the image's
+  creator, or when the ``cloudflare_id`` is already registered locally to a
+  different ``user``
+* ``CloudflareImagesError``: When the ``cloudflare_id`` is longer than the local
+  column (255), or for other Cloudflare API failures
+
+**Example:**
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import (
+       CloudflareImage, ImageNotFoundError, ImageNotReadyError, ImageOwnershipError,
+   )
+
+   try:
+       image = CloudflareImage.objects.register_uploaded(
+           cloudflare_id,
+           user=request.user,
+           expected_creator=str(request.user.pk),  # optional ownership gate
+       )
+   except ImageNotFoundError:
+       ...  # id does not exist in Cloudflare
+   except ImageNotReadyError:
+       ...  # exists but upload not completed (still a draft)
+   except ImageOwnershipError:
+       ...  # image belongs to a different creator
+
+.. warning::
+
+   Calling ``CloudflareImage.objects.get_or_create(cloudflare_id=<client value>)``
+   directly is unsafe — the id may not exist, may be a draft, or may belong to
+   another user, and it leaves a bare local row. Use ``register_uploaded``
+   instead.
+
+ImageMetadataFactory
+--------------------
+
+.. autoclass:: django_cloudflareimages_toolkit.ImageMetadataFactory
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Pluggable factory for computing the metadata attached to each upload.
+Subclass it and override ``get_metadata``; instances are callable.
+Configure via the ``METADATA_FACTORY`` setting.
+
+**Method to override:**
+
+.. code-block:: python
+
+   def get_metadata(self, *, metadata, user=None, custom_id=None,
+                    creator=None, **context) -> dict
+
+The factory receives the already-resolved metadata (``DEFAULT_METADATA``
+merged with per-request metadata) plus upload context, and returns the final
+metadata dict that is sent to Cloudflare and persisted. Merge precedence,
+lowest to highest, is ``DEFAULT_METADATA < per-request metadata < factory
+output``.
+
+**Example:**
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import ImageMetadataFactory
+
+   class TenantMetadataFactory(ImageMetadataFactory):
+       def get_metadata(self, *, metadata, user=None, **context):
+           if user is not None:
+               metadata['uploaded_by'] = str(user.pk)
+           metadata['source'] = 'web'
+           return metadata
 
 CloudflareImageField
 --------------------
@@ -471,6 +579,78 @@ Raised when image data validation fails.
        # Validation occurs during model save
    except ValidationError as e:
        print(f"Validation error: {e}")
+
+ImageNotFoundError
+~~~~~~~~~~~~~~~~~~
+
+.. autoexception:: django_cloudflareimages_toolkit.exceptions.ImageNotFoundError
+
+Raised when an image does not exist in Cloudflare. This is raised by
+``get_image()`` on a Cloudflare 404 and by
+``CloudflareImage.objects.register_uploaded()`` when the supplied
+``cloudflare_id`` does not exist. Importable from both
+``django_cloudflareimages_toolkit`` and
+``django_cloudflareimages_toolkit.exceptions``.
+
+**Example:**
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import ImageNotFoundError
+
+   try:
+       service.get_image('missing-id')
+   except ImageNotFoundError as e:
+       print(f"Image not found: {e}")
+
+ImageNotReadyError
+~~~~~~~~~~~~~~~~~~
+
+.. autoexception:: django_cloudflareimages_toolkit.exceptions.ImageNotReadyError
+
+Subclass of ``CloudflareImagesError``. Raised by
+``CloudflareImage.objects.register_uploaded()`` when the image exists in
+Cloudflare but is still a draft (the upload has not completed). No local row
+is created in this case. Importable from both
+``django_cloudflareimages_toolkit`` and
+``django_cloudflareimages_toolkit.exceptions``.
+
+**Example:**
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import ImageNotReadyError
+
+   try:
+       CloudflareImage.objects.register_uploaded(cloudflare_id)
+   except ImageNotReadyError as e:
+       print(f"Upload not completed yet: {e}")
+
+ImageOwnershipError
+~~~~~~~~~~~~~~~~~~~
+
+.. autoexception:: django_cloudflareimages_toolkit.exceptions.ImageOwnershipError
+
+Subclass of ``CloudflareImagesError``. Raised by
+``CloudflareImage.objects.register_uploaded()`` when an ``expected_creator`` is
+supplied and the Cloudflare ``creator`` on the image does not match it. The
+check runs before any local row is created, so it prevents a caller from
+registering another user's completed image. Importable from both
+``django_cloudflareimages_toolkit`` and
+``django_cloudflareimages_toolkit.exceptions``.
+
+**Example:**
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import ImageOwnershipError
+
+   try:
+       CloudflareImage.objects.register_uploaded(
+           cloudflare_id, user=request.user, expected_creator=str(request.user.pk)
+       )
+   except ImageOwnershipError as e:
+       print(f"Not your image: {e}")
 
 Utility APIs
 ------------

@@ -40,9 +40,17 @@ The most important logic lives in four model methods and properties:
 - `get_variant_url(variant_name: str) -> str | None` inspects the `variants` JSON field. It supports both the current list-of-URLs form and a defensive dict lookup if Cloudflare ever returns a mapped variant structure.
 - `public_url` and `thumbnail_url` are convenience properties that call `get_variant_url("public")` and `get_variant_url("thumbnail")`.
 - `is_ready` is stricter than `is_uploaded`; it requires both `status == uploaded` and a truthy `variants` list.
-- `update_from_cloudflare_response(response_data: dict[str, Any]) -> None` applies uploaded flags, draft flags, variants, metadata, width, height, and format, then saves the model.
+- `update_from_cloudflare_response(response_data: dict[str, Any]) -> None` applies uploaded flags, draft flags, variants, metadata, creator, filename, width, height, and format, then saves the model.
 
-`ImageUploadLog` is intentionally minimal: `event_type`, `message`, JSON `data`, and `timestamp`. The service writes logs when it creates upload URLs, checks status, deletes images, and processes webhooks. Admin then renders those rows inline for incident-style debugging.
+`ImageUploadLog` is intentionally minimal: `event_type`, `message`, JSON `data`, and `timestamp`. The service writes logs when it creates upload URLs, checks status, deletes images, processes webhooks, and registers already-uploaded images (the `image_registered` event). Admin then renders those rows inline for incident-style debugging.
+
+## The Creator Field and Persisted Context
+
+`CloudflareImage.creator` is a `CharField(max_length=255, blank=True, db_index=True)`. It captures the Cloudflare `creator` value associated with an upload and, because it is indexed, it is directly queryable for ownership-style filtering. The creator is resolved during `create_direct_upload_url` (falling back to the `DEFAULT_CREATOR` setting when not passed), sent to Cloudflare, and stored on the row. Upload metadata is persisted in the queryable `metadata` field, while the raw Cloudflare payload metadata is kept in the `cloudflare_metadata` JSON field. Both creator and metadata survive later synchronization because `update_from_cloudflare_response` re-populates them from the Cloudflare response, so the local row stays queryable on creator and metadata.
+
+## Registering an Already-Uploaded Image
+
+The custom `CloudflareImageManager` exposes `CloudflareImage.objects.register_uploaded(cloudflare_id, user=None) -> CloudflareImage`. It is the safe way to create a local row for an image the browser already uploaded directly to Cloudflare: it delegates to `cloudflare_service.register_uploaded_image`, which confirms the image exists and is not a draft before `get_or_create`-ing the row and populating status, variants, metadata, creator, and filename. Prefer it over calling `get_or_create` with a client-supplied `cloudflare_id`. See the direct upload lifecycle for the full flow.
 
 ## Basic Usage
 
@@ -69,6 +77,7 @@ from django_cloudflareimages_toolkit.models import CloudflareImage, ImageUploadS
 recent_ready_images = (
     CloudflareImage.objects.filter(
         user=request.user,
+        creator=str(request.user.pk),
         status=ImageUploadStatus.UPLOADED,
         uploaded_at__gte=timezone.now() - timezone.timedelta(days=7),
         require_signed_urls=True,

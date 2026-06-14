@@ -11,8 +11,16 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.db import models
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 User = get_user_model()
+
+# Max length of the indexed ``creator`` column. Kept at 255 so the index stays
+# within InnoDB's key-length limit under MySQL/utf8mb4 (a 1024-char utf8mb4
+# column needs 4096 bytes, over the 3072-byte cap). Cloudflare allows longer
+# creator values; the service rejects over-length creators on upload and
+# truncates longer values returned for externally-created images on register.
+CREATOR_MAX_LENGTH = 255
 
 
 class ImageUploadStatus(models.TextChoices):
@@ -25,8 +33,51 @@ class ImageUploadStatus(models.TextChoices):
     EXPIRED = "expired", "Expired"
 
 
+class CloudflareImageManager(models.Manager):
+    """Manager exposing safe, first-class helpers for CloudflareImage."""
+
+    def register_uploaded(
+        self, cloudflare_id: str, user=None, expected_creator: str | None = None
+    ) -> "CloudflareImage":
+        """
+        Safely register an already-uploaded image by its ``cloudflare_id``.
+
+        Unlike ``get_or_create(cloudflare_id=...)`` with a client-supplied ID,
+        this verifies the image against Cloudflare first: it confirms the image
+        exists and that its draft state is cleared (bytes actually uploaded)
+        before creating/returning the local record, then populates status,
+        variants, and metadata from the Cloudflare response.
+
+        Args:
+            cloudflare_id: The Cloudflare image ID reported by the client.
+            user: Django user to associate with the image (optional).
+            expected_creator: If given, the Cloudflare ``creator`` on the image
+                must equal this value (otherwise ``ImageOwnershipError`` is
+                raised before any local row is created). Pass the uploader's id
+                here when you set ``creator`` at upload time to enforce that a
+                caller can only register their own image.
+
+        Returns:
+            The created or updated CloudflareImage instance.
+
+        Raises:
+            ImageNotFoundError: If the image does not exist in Cloudflare.
+            ImageNotReadyError: If the image exists but is still a draft.
+            ImageOwnershipError: If ``expected_creator`` does not match.
+            CloudflareImagesError: For other Cloudflare API failures.
+        """
+        # Imported lazily to avoid a circular import (services imports models).
+        from .services import cloudflare_service
+
+        return cloudflare_service.register_uploaded_image(
+            cloudflare_id, user=user, expected_creator=expected_creator
+        )
+
+
 class CloudflareImage(models.Model):
     """Model to track Cloudflare image uploads."""
+
+    objects = CloudflareImageManager()
 
     # Primary identifiers
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -56,6 +107,10 @@ class CloudflareImage(models.Model):
     # Cloudflare settings
     require_signed_urls = models.BooleanField(default=True)
     metadata = models.JSONField(default=dict, blank=True)
+    # Cloudflare "creator" field: associates the image with a creator/user.
+    # Indexed so records can be queried by creator from Django. See
+    # CREATOR_MAX_LENGTH for why the length is capped.
+    creator = models.CharField(max_length=CREATOR_MAX_LENGTH, blank=True, db_index=True)
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -182,7 +237,13 @@ class CloudflareImage(models.Model):
     def update_from_cloudflare_response(self, response_data: dict[str, Any]) -> None:
         """Update model fields from Cloudflare API response."""
         if "uploaded" in response_data:
-            self.uploaded_at = timezone.now()
+            # Prefer Cloudflare's own upload timestamp so registering or
+            # re-syncing a previously uploaded image doesn't overwrite the real
+            # time with "now" (which would corrupt uploaded_after/before filters).
+            uploaded = response_data["uploaded"]
+            if isinstance(uploaded, str):
+                uploaded = parse_datetime(uploaded)
+            self.uploaded_at = uploaded or self.uploaded_at or timezone.now()
             self.status = ImageUploadStatus.UPLOADED
 
         if "draft" in response_data and response_data["draft"]:
@@ -191,8 +252,21 @@ class CloudflareImage(models.Model):
         if "variants" in response_data:
             self.variants = response_data["variants"]
 
+        # Cloudflare returns image metadata under "meta"; webhook payloads in
+        # this toolkit use "metadata". Accept either, preferring "metadata".
         if "metadata" in response_data:
             self.cloudflare_metadata = response_data["metadata"]
+        elif "meta" in response_data:
+            self.cloudflare_metadata = response_data["meta"]
+
+        if response_data.get("creator"):
+            # Images created outside this toolkit may carry a creator longer
+            # than our indexed column; truncate so the save can't fail and leave
+            # the image untracked. Ownership checks compare the full CF value.
+            self.creator = response_data["creator"][:CREATOR_MAX_LENGTH]
+
+        if response_data.get("filename"):
+            self.filename = response_data["filename"]
 
         # Update image dimensions and format if available
         if "width" in response_data:

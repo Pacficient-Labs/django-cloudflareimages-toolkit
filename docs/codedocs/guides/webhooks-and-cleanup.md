@@ -48,6 +48,18 @@ The webhook payload must include at least the Cloudflare image `id`. `WebhookPay
 
 </Step>
 <Step>
+### Confirm uploads without a webhook
+
+Webhooks are the push-based way to converge the local row, but they are not the only one. When you are not waiting on a webhook, confirm and persist a completed browser upload with `CloudflareImage.objects.register_uploaded(cloudflare_id, user=...)`. It fetches the image from Cloudflare, raises `ImageNotFoundError` for an unknown ID, raises `ImageNotReadyError` while Cloudflare still reports the image as a draft, and only then creates or updates the local row from the authoritative Cloudflare response, logging an `image_registered` event.
+
+```python
+from django_cloudflareimages_toolkit.models import CloudflareImage
+
+image = CloudflareImage.objects.register_uploaded(cloudflare_id, user=request.user)
+```
+
+</Step>
+<Step>
 ### Run periodic cleanup
 
 Use the packaged management command for expired upload URLs:

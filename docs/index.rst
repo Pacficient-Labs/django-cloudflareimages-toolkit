@@ -73,6 +73,9 @@ Features
 --------
 
 * **Secure Uploads**: Direct client-side uploads without exposing API credentials
+* **Safe Registration**: ``register_uploaded`` validates client-supplied image IDs against Cloudflare before persisting
+* **Creator Tagging**: Associate uploads with a Cloudflare ``creator`` value, persisted and queryable
+* **Pluggable Metadata**: ``ImageMetadataFactory`` for server-side control over upload metadata
 * **Image Variants**: Automatic support for Cloudflare's image transformations
 * **Webhook Integration**: Real-time processing status updates
 * **Admin Interface**: Django admin integration for image management

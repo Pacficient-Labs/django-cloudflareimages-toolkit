@@ -59,9 +59,14 @@ CLOUDFLARE_IMAGES = {
     'BASE_URL': 'https://api.cloudflare.com/client/v4',  # Optional
     'DEFAULT_EXPIRY_MINUTES': 30,  # Optional (2-360 minutes)
     'REQUIRE_SIGNED_URLS': True,  # Optional
+    'DEFAULT_METADATA': {'env': 'production'},  # Optional: merged under per-request metadata
+    'DEFAULT_CREATOR': None,  # Optional: default Cloudflare "creator" value
+    'METADATA_FACTORY': None,  # Optional: dotted path to an ImageMetadataFactory (see below)
     'WEBHOOK_SECRET': 'your-webhook-secret',  # Optional
     'MAX_FILE_SIZE_MB': 10,  # Optional
 }
+# These deployment-time defaults are intended to be env-backed in your project.
+# Per-request values always take precedence over the settings defaults.
 # Note: ACCOUNT_HASH is found in Cloudflare Images dashboard under "Developer Resources"
 # or from any image delivery URL: https://imagedelivery.net/<ACCOUNT_HASH>/...
 
@@ -122,7 +127,8 @@ Content-Type: application/json
     "metadata": {"type": "avatar", "user_id": "123"},
     "require_signed_urls": true,
     "expiry_minutes": 60,
-    "filename": "avatar.jpg"
+    "filename": "avatar.jpg",
+    "creator": "user-123"
 }
 ```
 
@@ -220,12 +226,58 @@ image = cloudflare_service.create_direct_upload_url(
     user=request.user,
     metadata={'type': 'product', 'category': 'electronics'},
     require_signed_urls=True,
-    expiry_minutes=60
+    expiry_minutes=60,
+    creator='user-123',  # Cloudflare "creator" field, persisted + queryable
 )
 
 print(f"Upload URL: {image.upload_url}")
 print(f"Expires at: {image.expires_at}")
 ```
+
+Any argument you omit falls back to its settings default (`DEFAULT_METADATA`,
+`DEFAULT_CREATOR`, `REQUIRE_SIGNED_URLS`, `DEFAULT_EXPIRY_MINUTES`). To bypass
+`DEFAULT_CREATOR` for a single upload, pass an explicit empty string
+(`creator=''`, or `"creator": ""` on the REST endpoint). The resolved
+`metadata` and `creator` are sent to Cloudflare's
+`/images/v2/direct_upload` endpoint and round-tripped onto the local
+`CloudflareImage` record, so they are queryable from Django:
+
+```python
+CloudflareImage.objects.filter(creator='user-123')
+CloudflareImage.objects.filter(metadata__type='product')
+```
+
+#### Programmatic metadata (`ImageMetadataFactory`)
+
+For metadata that must be computed at upload time (tenant id, request context,
+timestamps, …), register a server-side factory instead of a static
+`DEFAULT_METADATA` dict. Subclass `ImageMetadataFactory` and point
+`METADATA_FACTORY` at it (a dotted path, class, instance, or any callable):
+
+```python
+# myapp/factories.py
+from django_cloudflareimages_toolkit import ImageMetadataFactory
+
+class TenantMetadataFactory(ImageMetadataFactory):
+    def get_metadata(self, *, metadata, user=None, **context):
+        if user is not None:
+            metadata['uploaded_by'] = str(user.pk)
+        metadata['source'] = 'web'
+        return metadata
+
+# settings.py
+CLOUDFLARE_IMAGES['METADATA_FACTORY'] = 'myapp.factories.TenantMetadataFactory'
+```
+
+The factory receives the already-resolved metadata plus upload context and
+returns the final dict. Merge precedence is, lowest to highest:
+
+```
+DEFAULT_METADATA  <  per-request metadata  <  factory output
+```
+
+Because the factory is trusted server-side code it has the final say and can
+both augment and override client-supplied keys.
 
 #### Image Transformations
 
@@ -266,6 +318,60 @@ if image.is_uploaded:
 # Refresh status from Cloudflare
 cloudflare_service.check_image_status(image)
 ```
+
+#### Registering an already-uploaded image
+
+When a client finishes a direct upload it reports back a `cloudflare_id`. Do
+**not** trust that ID by calling
+`CloudflareImage.objects.get_or_create(cloudflare_id=<id>)`: the ID may not
+exist, may still be a draft (no bytes uploaded yet), or belong to another user,
+and `get_or_create` would happily leave a bare local row with no status or
+variants.
+
+Use the manager method instead. It verifies the image against Cloudflare first
+— confirming it exists and that its draft state is cleared — then creates the
+local record populated with status, variants, metadata, and creator:
+
+```python
+from django_cloudflareimages_toolkit import (
+    CloudflareImage,
+    ImageNotFoundError,
+    ImageNotReadyError,
+    ImageOwnershipError,
+)
+
+try:
+    image = CloudflareImage.objects.register_uploaded(
+        cloudflare_id, user=request.user
+    )
+except ImageNotFoundError:
+    ...  # the ID does not exist in Cloudflare
+except ImageNotReadyError:
+    ...  # the image exists but is still a draft (upload not completed)
+```
+
+`register_uploaded` only creates/returns a local row once Cloudflare confirms a
+completed upload, so the resulting record is always trustworthy.
+
+If you set `creator` at upload time to the uploader's identifier, pass
+`expected_creator` so a caller can only register *their own* image — the
+Cloudflare `creator` must match or `ImageOwnershipError` is raised before any
+row is created:
+
+```python
+try:
+    image = CloudflareImage.objects.register_uploaded(
+        cloudflare_id,
+        user=request.user,
+        expected_creator=str(request.user.pk),
+    )
+except ImageOwnershipError:
+    ...  # the image belongs to a different creator
+```
+
+`ImageOwnershipError` is also raised if the `cloudflare_id` is already registered
+locally to a *different* user, so `register_uploaded` never hands a caller back
+someone else's record — even without `expected_creator`.
 
 ### Management Commands
 
