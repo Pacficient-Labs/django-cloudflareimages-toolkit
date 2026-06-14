@@ -100,8 +100,6 @@ class ImageNotReadyError(CloudflareImagesError):
     completed, so it must not be trusted as a finished image.
     """
 
-    pass
-
 
 class ImageOwnershipError(CloudflareImagesError):
     """
@@ -112,5 +110,3 @@ class ImageOwnershipError(CloudflareImagesError):
     guards against a caller registering another user's completed image by
     submitting an arbitrary ``cloudflare_id`` from the same account.
     """
-
-    pass
