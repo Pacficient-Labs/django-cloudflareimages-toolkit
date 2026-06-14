@@ -39,7 +39,11 @@ class ImageUploadRequestSerializer(serializers.Serializer):
     creator = serializers.CharField(
         max_length=255,
         required=False,
-        help_text="Cloudflare creator value to associate with the image",
+        allow_blank=True,
+        help_text=(
+            "Cloudflare creator value to associate with the image. "
+            'Pass "" to force an untagged upload even when DEFAULT_CREATOR is set.'
+        ),
     )
 
     def validate_metadata(self, value):

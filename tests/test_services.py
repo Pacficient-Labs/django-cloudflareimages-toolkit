@@ -165,6 +165,20 @@ class TestUploadDefaults:
         assert responses.calls[-1].request.url == DIRECT_UPLOAD_URL
 
     @responses.activate
+    def test_blank_creator_suppresses_default(self, monkeypatch, user):
+        """An explicit empty creator opts out of DEFAULT_CREATOR."""
+        monkeypatch.setitem(
+            cloudflare_settings._settings, "DEFAULT_CREATOR", "default-creator"
+        )
+        _mock_direct_upload()
+
+        image = cloudflare_service.create_direct_upload_url(user=user, creator="")
+
+        assert image.creator == ""
+        # The configured default was not applied or sent to Cloudflare.
+        assert "default-creator" not in _last_upload_body()
+
+    @responses.activate
     def test_over_length_creator_rejected_before_request(self, user):
         """A creator longer than the column cap is rejected before the CF call."""
         _mock_direct_upload()
@@ -182,6 +196,18 @@ class TestUploadDefaults:
             )
         # No request was made to Cloudflare.
         assert len(responses.calls) == 0
+
+
+@pytest.mark.django_db
+def test_serializer_accepts_blank_creator():
+    """The upload serializer allows "" so callers can bypass DEFAULT_CREATOR."""
+    from django_cloudflareimages_toolkit.serializers import (
+        ImageUploadRequestSerializer,
+    )
+
+    serializer = ImageUploadRequestSerializer(data={"creator": ""})
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data.get("creator") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -416,3 +442,35 @@ class TestRegisterUploaded:
             )
 
         assert not CloudflareImage.objects.filter(cloudflare_id=cid).exists()
+
+    @responses.activate
+    def test_existing_row_owned_by_other_user_raises(self, user):
+        """Registering an id already tracked for another user must not leak it."""
+        cid = "already-owned"
+        other = get_user_model().objects.create(username="bob")
+        CloudflareImage.objects.create(
+            cloudflare_id=cid,
+            user=other,
+            upload_url="",
+            expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        )
+        responses.add(
+            responses.GET,
+            _image_url(cid),
+            json={
+                "success": True,
+                "result": {
+                    "id": cid,
+                    "uploaded": "2025-01-01T00:00:00Z",
+                    "draft": False,
+                    "variants": [],
+                },
+            },
+            status=200,
+        )
+
+        with pytest.raises(ImageOwnershipError):
+            CloudflareImage.objects.register_uploaded(cid, user=user)
+
+        # The row still belongs to the original owner; it was not reassigned.
+        assert CloudflareImage.objects.get(cloudflare_id=cid).user == other

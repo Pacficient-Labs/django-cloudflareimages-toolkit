@@ -463,6 +463,17 @@ class CloudflareImagesService:
         # Associate the user on pre-existing rows that don't have one yet.
         if user is not None and image.user_id is None:
             image.user = user
+        elif (
+            user is not None and image.user_id is not None and image.user_id != user.pk
+        ):
+            # The image is already tracked locally for a different user. Refuse
+            # rather than returning another user's record to this caller.
+            logger.warning(
+                f"Refusing to register image {cloudflare_id}: owned by another user"
+            )
+            raise ImageOwnershipError(
+                f"Image {cloudflare_id} is already registered to another user"
+            )
 
         # Backfill the queryable metadata field on a pre-existing row when CF
         # has metadata for it (don't clobber existing values with an empty dict).
