@@ -474,3 +474,43 @@ class TestRegisterUploaded:
 
         # The row still belongs to the original owner; it was not reassigned.
         assert CloudflareImage.objects.get(cloudflare_id=cid).user == other
+
+    @responses.activate
+    def test_existing_row_refreshes_require_signed_urls(self, user):
+        """Re-registering refreshes a stale require_signed_urls flag from CF."""
+        cid = "refresh-signed-flag"
+        CloudflareImage.objects.create(
+            cloudflare_id=cid,
+            user=user,
+            upload_url="",
+            require_signed_urls=True,  # stale local value
+            expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        )
+        responses.add(
+            responses.GET,
+            _image_url(cid),
+            json={
+                "success": True,
+                "result": {
+                    "id": cid,
+                    "uploaded": "2025-01-01T00:00:00Z",
+                    "draft": False,
+                    "requireSignedURLs": False,  # Cloudflare is the source of truth
+                    "variants": [],
+                },
+            },
+            status=200,
+        )
+
+        image = CloudflareImage.objects.register_uploaded(cid, user=user)
+
+        assert image.require_signed_urls is False
+
+    @responses.activate
+    def test_overlong_cloudflare_id_rejected_before_lookup(self, user):
+        """An id longer than the column is rejected before any remote call."""
+        cid = "x" * 256
+        with pytest.raises(CloudflareImagesError):
+            CloudflareImage.objects.register_uploaded(cid, user=user)
+        assert len(responses.calls) == 0
+        assert not CloudflareImage.objects.filter(cloudflare_id=cid).exists()

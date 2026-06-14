@@ -152,7 +152,9 @@ variants, metadata (Cloudflare's `meta` is mirrored into both `metadata` and
 `ImageOwnershipError` is raised — before the row is returned — in two cases: when
 `expected_creator` is supplied and the Cloudflare `creator` does not equal it,
 and when the `cloudflare_id` is already tracked locally for a *different* `user`
-(so a caller can never be handed another user's record). This
+(so a caller can never be handed another user's record). A `cloudflare_id` longer than the local column (255) raises
+`CloudflareImagesError` before the remote lookup, and a pre-existing row's
+`require_signed_urls` is refreshed from the Cloudflare response. This
 method backs the `CloudflareImage.objects.register_uploaded()` manager helper and
 is the recommended alternative to a raw `get_or_create(cloudflare_id=...)`.
 

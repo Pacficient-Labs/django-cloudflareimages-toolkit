@@ -70,6 +70,12 @@ Release notes are also published on
 - The upload endpoint's `creator` field accepts an empty string (`allow_blank`),
   so an API caller can send `""` to force an untagged upload that bypasses
   `DEFAULT_CREATOR` (previously a `400`).
+- `register_uploaded` refreshes a pre-existing row's `require_signed_urls` from
+  Cloudflare (`get_or_create` ignores `defaults` for existing rows), so the
+  signed-URL stat/filter no longer goes stale on re-registration.
+- `register_uploaded` rejects a `cloudflare_id` longer than the column (255)
+  with a typed `CloudflareImagesError` before the remote lookup, instead of a
+  database error after the Cloudflare call succeeds.
 - Migration `0002` backfills the new `creator` column with an explicit empty
   string so existing rows upgrade cleanly on every database backend.
 

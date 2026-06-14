@@ -414,6 +414,15 @@ class CloudflareImagesService:
             ImageOwnershipError: If ``expected_creator`` does not match.
             CloudflareImagesError: For other Cloudflare API failures.
         """
+        # Reject an id we couldn't store before doing any remote work, so an
+        # externally-created custom id longer than the column raises the typed
+        # failure (and creates no row) rather than a database error on save.
+        max_id_len = CloudflareImage._meta.get_field("cloudflare_id").max_length
+        if len(cloudflare_id) > max_id_len:
+            raise CloudflareImagesError(
+                f"cloudflare_id exceeds {max_id_len} characters"
+            )
+
         # Raises ImageNotFoundError if the image does not exist in Cloudflare.
         data = self.get_image(cloudflare_id)
         result = data["result"]
@@ -479,6 +488,12 @@ class CloudflareImagesService:
         # has metadata for it (don't clobber existing values with an empty dict).
         if not created and cf_meta:
             image.metadata = cf_meta
+
+        # Refresh the signed-URL flag from Cloudflare on a pre-existing row too
+        # (get_or_create ignores ``defaults`` when the row already exists, and
+        # update_from_cloudflare_response does not carry requireSignedURLs).
+        if not created and "requireSignedURLs" in result:
+            image.require_signed_urls = result["requireSignedURLs"]
 
         # Populate status, variants, cloudflare_metadata, creator and filename.
         image.update_from_cloudflare_response(result)
