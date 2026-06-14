@@ -32,7 +32,9 @@ class ImageUploadStatus(models.TextChoices):
 top of the default manager API:
 
 ```python
-def register_uploaded(self, cloudflare_id: str, user=None) -> CloudflareImage: ...
+def register_uploaded(
+    self, cloudflare_id: str, user=None, expected_creator: str | None = None
+) -> CloudflareImage: ...
 ```
 
 This is the safe way to persist a client-supplied `cloudflare_id`. It delegates
@@ -40,7 +42,10 @@ to `cloudflare_service.register_uploaded_image()`, which verifies the image
 against Cloudflare (it must exist and have its draft state cleared) before
 creating the local row, populating status, variants, metadata, and creator from
 the Cloudflare response. It raises `ImageNotFoundError` (missing) or
-`ImageNotReadyError` (still a draft) instead of trusting the input.
+`ImageNotReadyError` (still a draft) instead of trusting the input. Pass
+`expected_creator` to require the Cloudflare `creator` to equal a known owner
+token (e.g. the uploader's id); a mismatch raises `ImageOwnershipError` before
+any row is created.
 
 > ⚠️ Do **not** call `CloudflareImage.objects.get_or_create(cloudflare_id=<client value>)`
 > directly: the ID may not exist, may still be a draft, or belong to another

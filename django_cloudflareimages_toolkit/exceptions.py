@@ -101,3 +101,16 @@ class ImageNotReadyError(CloudflareImagesError):
     """
 
     pass
+
+
+class ImageOwnershipError(CloudflareImagesError):
+    """
+    Exception raised when a registered image's creator does not match.
+
+    This is raised by ``register_uploaded`` when an ``expected_creator`` is
+    supplied and the Cloudflare ``creator`` on the image does not equal it. It
+    guards against a caller registering another user's completed image by
+    submitting an arbitrary ``cloudflare_id`` from the same account.
+    """
+
+    pass

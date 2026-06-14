@@ -28,6 +28,7 @@ from django_cloudflareimages_toolkit import (
     UploadError,
     ImageNotFoundError,
     ImageNotReadyError,
+    ImageOwnershipError,
 )
 ```
 

@@ -28,7 +28,9 @@ class ImageUploadStatus(models.TextChoices):
 class CloudflareImageManager(models.Manager):
     """Manager exposing safe, first-class helpers for CloudflareImage."""
 
-    def register_uploaded(self, cloudflare_id: str, user=None) -> "CloudflareImage":
+    def register_uploaded(
+        self, cloudflare_id: str, user=None, expected_creator: str | None = None
+    ) -> "CloudflareImage":
         """
         Safely register an already-uploaded image by its ``cloudflare_id``.
 
@@ -41,6 +43,11 @@ class CloudflareImageManager(models.Manager):
         Args:
             cloudflare_id: The Cloudflare image ID reported by the client.
             user: Django user to associate with the image (optional).
+            expected_creator: If given, the Cloudflare ``creator`` on the image
+                must equal this value (otherwise ``ImageOwnershipError`` is
+                raised before any local row is created). Pass the uploader's id
+                here when you set ``creator`` at upload time to enforce that a
+                caller can only register their own image.
 
         Returns:
             The created or updated CloudflareImage instance.
@@ -48,12 +55,15 @@ class CloudflareImageManager(models.Manager):
         Raises:
             ImageNotFoundError: If the image does not exist in Cloudflare.
             ImageNotReadyError: If the image exists but is still a draft.
+            ImageOwnershipError: If ``expected_creator`` does not match.
             CloudflareImagesError: For other Cloudflare API failures.
         """
         # Imported lazily to avoid a circular import (services imports models).
         from .services import cloudflare_service
 
-        return cloudflare_service.register_uploaded_image(cloudflare_id, user=user)
+        return cloudflare_service.register_uploaded_image(
+            cloudflare_id, user=user, expected_creator=expected_creator
+        )
 
 
 class CloudflareImage(models.Model):

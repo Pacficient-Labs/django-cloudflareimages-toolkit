@@ -137,7 +137,7 @@ failures raise `CloudflareImagesError`).
 
 ```python
 def register_uploaded_image(
-    self, cloudflare_id: str, user=None
+    self, cloudflare_id: str, user=None, expected_creator: str | None = None
 ) -> CloudflareImage: ...
 ```
 
@@ -149,9 +149,11 @@ variants, metadata (Cloudflare's `meta` is mirrored into both `metadata` and
 `update_from_cloudflare_response()`. Writes an `image_registered`
 `ImageUploadLog`. Raises `ImageNotFoundError` if the image is missing or
 `ImageNotReadyError` if it is still a draft (no local row is created on either).
-This method backs the `CloudflareImage.objects.register_uploaded()` manager
-helper and is the recommended alternative to a raw
-`get_or_create(cloudflare_id=...)`.
+When `expected_creator` is supplied, the Cloudflare `creator` must equal it or
+`ImageOwnershipError` is raised before any row is created — pass it to stop a
+caller registering another user's image by submitting an arbitrary id. This
+method backs the `CloudflareImage.objects.register_uploaded()` manager helper and
+is the recommended alternative to a raw `get_or_create(cloudflare_id=...)`.
 
 ### `update_image`
 
@@ -192,7 +194,7 @@ Looks up the local row by `payload["id"]`, applies `update_from_cloudflare_respo
 
 ## Error Behavior
 
-Remote request failures raise `CloudflareImagesError`. HTTP success with a Cloudflare response that sets `"success": false` also raises `CloudflareImagesError` with the concatenated Cloudflare error messages. Two cases are typed subclasses of `CloudflareImagesError`: a Cloudflare 404 from `get_image`/`register_uploaded_image` raises `ImageNotFoundError`, and a still-draft image in `register_uploaded_image` raises `ImageNotReadyError`.
+Remote request failures raise `CloudflareImagesError`. HTTP success with a Cloudflare response that sets `"success": false` also raises `CloudflareImagesError` with the concatenated Cloudflare error messages. Three cases are typed subclasses of `CloudflareImagesError`: a Cloudflare 404 from `get_image`/`register_uploaded_image` raises `ImageNotFoundError`, a still-draft image in `register_uploaded_image` raises `ImageNotReadyError`, and an `expected_creator` mismatch in `register_uploaded_image` raises `ImageOwnershipError`.
 
 ## Common Pattern
 

@@ -83,6 +83,8 @@ except ImageNotFoundError:
     ...  # not in Cloudflare
 except ImageNotReadyError:
     ...  # still a draft (upload not completed)
+# Optional ownership gate: pass expected_creator=str(request.user.pk) to require the
+# Cloudflare creator to match (raises ImageOwnershipError before any row is created).
 ```
 
 Programmatic metadata via a factory (precedence: DEFAULT_METADATA < per-request

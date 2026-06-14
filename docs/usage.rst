@@ -376,7 +376,9 @@ populated with status, variants, metadata, and creator.
    ``register_uploaded`` is the recommended path: it validates the id against
    Cloudflare before persisting anything, and raises ``ImageNotFoundError``
    (id does not exist) or ``ImageNotReadyError`` (exists but still a draft)
-   without creating a local row on failure.
+   without creating a local row on failure. When you set ``creator`` at upload
+   time, also pass ``expected_creator=str(request.user.pk)`` so a caller can
+   only register their own image — a mismatch raises ``ImageOwnershipError``.
 
 Using in Django Forms
 ---------------------

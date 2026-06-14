@@ -27,14 +27,18 @@ Release notes are also published on
   callable) to build upload metadata programmatically. It receives the resolved
   metadata plus upload context and has the final say. Merge precedence:
   `DEFAULT_METADATA` < per-request metadata < factory output.
-- **`CloudflareImage.objects.register_uploaded(cloudflare_id, user=None)`.** A
-  safe, first-class way to register a client-supplied `cloudflare_id`: it fetches
-  the image from Cloudflare, confirms it exists and is no longer a draft, then
-  creates/returns the local record populated with status, variants, metadata,
-  and creator. Raises the typed `ImageNotFoundError` (missing) or new
-  `ImageNotReadyError` (still a draft) instead of silently trusting input.
-- New `ImageNotReadyError` exception, exported from the package root alongside
-  `ImageMetadataFactory`.
+- **`CloudflareImage.objects.register_uploaded(cloudflare_id, user=None,
+  expected_creator=None)`.** A safe, first-class way to register a
+  client-supplied `cloudflare_id`: it fetches the image from Cloudflare, confirms
+  it exists and is no longer a draft, then creates/returns the local record
+  populated with status, variants, metadata, and creator. Raises the typed
+  `ImageNotFoundError` (missing) or new `ImageNotReadyError` (still a draft)
+  instead of silently trusting input. Pass `expected_creator` (e.g. the
+  uploader's id) to require the Cloudflare `creator` to match before any local
+  row is created, raising `ImageOwnershipError` otherwise — this stops a caller
+  registering another user's completed image by submitting an arbitrary id.
+- New `ImageNotReadyError` and `ImageOwnershipError` exceptions, exported from
+  the package root alongside `ImageMetadataFactory`.
 
 ### Changed
 

@@ -38,6 +38,7 @@ def __getattr__(name):
         "UploadError": (".exceptions", "UploadError"),
         "ImageNotFoundError": (".exceptions", "ImageNotFoundError"),
         "ImageNotReadyError": (".exceptions", "ImageNotReadyError"),
+        "ImageOwnershipError": (".exceptions", "ImageOwnershipError"),
     }
 
     if name in django_components:
@@ -69,4 +70,5 @@ __all__ = [
     "UploadError",
     "ImageNotFoundError",
     "ImageNotReadyError",
+    "ImageOwnershipError",
 ]

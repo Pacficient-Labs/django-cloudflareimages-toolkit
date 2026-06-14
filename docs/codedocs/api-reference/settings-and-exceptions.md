@@ -102,6 +102,7 @@ from django_cloudflareimages_toolkit.exceptions import (
     UploadError,
     ImageNotFoundError,
     ImageNotReadyError,
+    ImageOwnershipError,
 )
 ```
 
@@ -128,16 +129,20 @@ class ValidationError(CloudflareImagesError): ...
 class UploadError(CloudflareImagesError): ...
 class ImageNotFoundError(CloudflareImagesError): ...
 class ImageNotReadyError(CloudflareImagesError): ...
+class ImageOwnershipError(CloudflareImagesError): ...
 ```
 
 `ImageNotReadyError` signals that a `cloudflare_id` is real but the upload has
-not completed (Cloudflare still reports `draft: true`).
+not completed (Cloudflare still reports `draft: true`). `ImageOwnershipError`
+signals that a registered image's Cloudflare `creator` does not match the
+`expected_creator` passed to `register_uploaded`.
 
 The service raises `CloudflareImagesError` directly for generic request and
-Cloudflare response failures. Two cases are now typed: `get_image` (and
+Cloudflare response failures. Three cases are now typed: `get_image` (and
 therefore `register_uploaded_image`) raises `ImageNotFoundError` on a Cloudflare
-404, and `register_uploaded_image` raises `ImageNotReadyError` for a still-draft
-image. Because both subclass `CloudflareImagesError`, existing
+404, `register_uploaded_image` raises `ImageNotReadyError` for a still-draft
+image, and it raises `ImageOwnershipError` on an `expected_creator` mismatch.
+Because all subclass `CloudflareImagesError`, existing
 `except CloudflareImagesError` handlers continue to match. The remaining derived
 classes are part of the public surface for application code that wants more
 specific failure categories.

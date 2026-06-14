@@ -335,6 +335,7 @@ from django_cloudflareimages_toolkit import (
     CloudflareImage,
     ImageNotFoundError,
     ImageNotReadyError,
+    ImageOwnershipError,
 )
 
 try:
@@ -349,6 +350,22 @@ except ImageNotReadyError:
 
 `register_uploaded` only creates/returns a local row once Cloudflare confirms a
 completed upload, so the resulting record is always trustworthy.
+
+If you set `creator` at upload time to the uploader's identifier, pass
+`expected_creator` so a caller can only register *their own* image — the
+Cloudflare `creator` must match or `ImageOwnershipError` is raised before any
+row is created:
+
+```python
+try:
+    image = CloudflareImage.objects.register_uploaded(
+        cloudflare_id,
+        user=request.user,
+        expected_creator=str(request.user.pk),
+    )
+except ImageOwnershipError:
+    ...  # the image belongs to a different creator
+```
 
 ### Management Commands
 

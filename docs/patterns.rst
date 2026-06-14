@@ -378,6 +378,21 @@ is created.
    except ImageNotReadyError:
        ...  # exists but upload not completed (still a draft)
 
+When you tag uploads with ``creator``, pass ``expected_creator`` to enforce
+ownership — the Cloudflare ``creator`` must match or ``ImageOwnershipError`` is
+raised before any row is created:
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import ImageOwnershipError
+
+   try:
+       image = CloudflareImage.objects.register_uploaded(
+           cloudflare_id, user=request.user, expected_creator=str(request.user.pk)
+       )
+   except ImageOwnershipError:
+       ...  # the id belongs to a different creator
+
 Because ``register_uploaded`` makes a synchronous call to Cloudflare, it is
 a natural fit for the retry and circuit-breaker wrappers above when the id
 is registered from a hot request path.

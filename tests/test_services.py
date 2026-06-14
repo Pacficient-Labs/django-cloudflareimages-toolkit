@@ -25,6 +25,7 @@ from django_cloudflareimages_toolkit.exceptions import (
     CloudflareImagesError,
     ImageNotFoundError,
     ImageNotReadyError,
+    ImageOwnershipError,
 )
 from django_cloudflareimages_toolkit.metadata import ImageMetadataFactory
 from django_cloudflareimages_toolkit.models import (
@@ -350,5 +351,56 @@ class TestRegisterUploaded:
 
         with pytest.raises(ImageNotReadyError):
             CloudflareImage.objects.register_uploaded(cid, user=user)
+
+        assert not CloudflareImage.objects.filter(cloudflare_id=cid).exists()
+
+    @responses.activate
+    def test_expected_creator_match_registers(self, user):
+        cid = "owned-by-me"
+        responses.add(
+            responses.GET,
+            _image_url(cid),
+            json={
+                "success": True,
+                "result": {
+                    "id": cid,
+                    "uploaded": "2025-01-01T00:00:00Z",
+                    "draft": False,
+                    "variants": [f"https://imagedelivery.net/hash/{cid}/public"],
+                    "creator": "user-7",
+                },
+            },
+            status=200,
+        )
+
+        image = CloudflareImage.objects.register_uploaded(
+            cid, user=user, expected_creator="user-7"
+        )
+        assert image.creator == "user-7"
+        assert image.status == ImageUploadStatus.UPLOADED
+
+    @responses.activate
+    def test_expected_creator_mismatch_raises_and_creates_no_row(self, user):
+        cid = "owned-by-someone-else"
+        responses.add(
+            responses.GET,
+            _image_url(cid),
+            json={
+                "success": True,
+                "result": {
+                    "id": cid,
+                    "uploaded": "2025-01-01T00:00:00Z",
+                    "draft": False,
+                    "variants": [],
+                    "creator": "another-user",
+                },
+            },
+            status=200,
+        )
+
+        with pytest.raises(ImageOwnershipError):
+            CloudflareImage.objects.register_uploaded(
+                cid, user=user, expected_creator="user-7"
+            )
 
         assert not CloudflareImage.objects.filter(cloudflare_id=cid).exists()

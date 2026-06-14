@@ -18,6 +18,7 @@ from .exceptions import (
     CloudflareImagesError,
     ImageNotFoundError,
     ImageNotReadyError,
+    ImageOwnershipError,
 )
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
 from .settings import cloudflare_settings
@@ -370,7 +371,9 @@ class CloudflareImagesService:
             logger.error(f"Failed to get image {image_id}: {str(e)}")
             raise CloudflareImagesError(f"Failed to get image: {str(e)}") from e
 
-    def register_uploaded_image(self, cloudflare_id: str, user=None) -> CloudflareImage:
+    def register_uploaded_image(
+        self, cloudflare_id: str, user=None, expected_creator: str | None = None
+    ) -> CloudflareImage:
         """
         Verify an uploaded image against Cloudflare and persist it locally.
 
@@ -384,6 +387,11 @@ class CloudflareImagesService:
         Args:
             cloudflare_id: The Cloudflare image ID reported by the client.
             user: Django user to associate with the image (optional).
+            expected_creator: If given, the Cloudflare ``creator`` on the image
+                must equal this value or ``ImageOwnershipError`` is raised before
+                any local row is created. Use it (e.g. with the uploader's id)
+                to stop a caller registering another user's image by submitting
+                an arbitrary id from the same Cloudflare account.
 
         Returns:
             The created or updated CloudflareImage instance.
@@ -391,6 +399,7 @@ class CloudflareImagesService:
         Raises:
             ImageNotFoundError: If the image does not exist in Cloudflare.
             ImageNotReadyError: If the image exists but is still a draft.
+            ImageOwnershipError: If ``expected_creator`` does not match.
             CloudflareImagesError: For other Cloudflare API failures.
         """
         # Raises ImageNotFoundError if the image does not exist in Cloudflare.
@@ -405,6 +414,17 @@ class CloudflareImagesService:
             )
             raise ImageNotReadyError(
                 f"Image {cloudflare_id} is still a draft (upload not completed)"
+            )
+
+        # Optional ownership gate: verify the Cloudflare creator matches the
+        # expected owner BEFORE creating any local row, so a caller can't attach
+        # someone else's completed image to themselves.
+        if expected_creator is not None and result.get("creator") != expected_creator:
+            logger.warning(
+                f"Refusing to register image {cloudflare_id}: creator mismatch"
+            )
+            raise ImageOwnershipError(
+                f"Image {cloudflare_id} does not belong to the expected creator"
             )
 
         # Cloudflare returns upload metadata under "meta" (older payloads use

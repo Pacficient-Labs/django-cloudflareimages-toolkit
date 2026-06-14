@@ -121,6 +121,8 @@ def confirm_upload(cloudflare_id: str, user) -> CloudflareImage:
 
 <Callout type="warn">Do not call `CloudflareImage.objects.get_or_create(cloudflare_id=<client value>)` directly. That trusts a client-supplied ID and creates a local row for an image that may not exist or may not belong to the caller. `register_uploaded()` is the recommended path because it verifies the image with Cloudflare before persisting.</Callout>
 
+If you set `creator` to the uploader's identifier at upload time, pass `expected_creator=str(user.pk)` to `register_uploaded()`. The Cloudflare `creator` on the image must match or `ImageOwnershipError` is raised before any row is created, so a caller cannot register another user's completed image by submitting an arbitrary ID from the same account.
+
 For normal completion you can still rely on webhooks, or poll on demand:
 
 ```python

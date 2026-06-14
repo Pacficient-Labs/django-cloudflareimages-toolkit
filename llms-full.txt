@@ -750,18 +750,23 @@ Metadata precedence (low to high): `DEFAULT_METADATA` < per-request `metadata` <
 
 #### register_uploaded_image()
 ```python
-def register_uploaded_image(cloudflare_id: str, user=None) -> CloudflareImage
+def register_uploaded_image(
+    cloudflare_id: str, user=None, expected_creator: str | None = None
+) -> CloudflareImage
 ```
 
 Safely persists a client-supplied `cloudflare_id`: fetches the image from
 Cloudflare, confirms it exists and is no longer a draft, then creates/returns the
 local record populated with status, variants, metadata, and creator. Backs the
 `CloudflareImage.objects.register_uploaded()` manager helper. Prefer it over a
-raw `get_or_create(cloudflare_id=...)`, which trusts unverified input.
+raw `get_or_create(cloudflare_id=...)`, which trusts unverified input. Pass
+`expected_creator` to require the Cloudflare `creator` to match a known owner
+token (e.g. the uploader's id) before any row is created.
 
 **Raises**:
 - `ImageNotFoundError`: the image does not exist in Cloudflare
 - `ImageNotReadyError`: the image exists but is still a draft
+- `ImageOwnershipError`: `expected_creator` does not match the image's creator
 
 #### check_image_status()
 ```python

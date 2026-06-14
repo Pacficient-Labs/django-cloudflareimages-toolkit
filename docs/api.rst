@@ -264,6 +264,8 @@ variants, metadata, and creator. No local row is created on failure.
 
 * ``cloudflare_id`` (str, required): Cloudflare image ID reported by the client
 * ``user`` (optional): User to associate with the local record
+* ``expected_creator`` (str, optional): When given, the Cloudflare ``creator``
+  must equal it or ``ImageOwnershipError`` is raised before any row is created
 
 **Returns:** ``CloudflareImage`` - The created or existing local record
 
@@ -271,23 +273,28 @@ variants, metadata, and creator. No local row is created on failure.
 
 * ``ImageNotFoundError``: When the image does not exist in Cloudflare
 * ``ImageNotReadyError``: When the image exists but is still a draft
+* ``ImageOwnershipError``: When ``expected_creator`` does not match the image's creator
 
 **Example:**
 
 .. code-block:: python
 
    from django_cloudflareimages_toolkit import (
-       CloudflareImage, ImageNotFoundError, ImageNotReadyError,
+       CloudflareImage, ImageNotFoundError, ImageNotReadyError, ImageOwnershipError,
    )
 
    try:
        image = CloudflareImage.objects.register_uploaded(
-           cloudflare_id, user=request.user
+           cloudflare_id,
+           user=request.user,
+           expected_creator=str(request.user.pk),  # optional ownership gate
        )
    except ImageNotFoundError:
        ...  # id does not exist in Cloudflare
    except ImageNotReadyError:
        ...  # exists but upload not completed (still a draft)
+   except ImageOwnershipError:
+       ...  # image belongs to a different creator
 
 .. warning::
 
@@ -614,6 +621,32 @@ is created in this case. Importable from both
        CloudflareImage.objects.register_uploaded(cloudflare_id)
    except ImageNotReadyError as e:
        print(f"Upload not completed yet: {e}")
+
+ImageOwnershipError
+~~~~~~~~~~~~~~~~~~~
+
+.. autoexception:: django_cloudflareimages_toolkit.exceptions.ImageOwnershipError
+
+Subclass of ``CloudflareImagesError``. Raised by
+``CloudflareImage.objects.register_uploaded()`` when an ``expected_creator`` is
+supplied and the Cloudflare ``creator`` on the image does not match it. The
+check runs before any local row is created, so it prevents a caller from
+registering another user's completed image. Importable from both
+``django_cloudflareimages_toolkit`` and
+``django_cloudflareimages_toolkit.exceptions``.
+
+**Example:**
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import ImageOwnershipError
+
+   try:
+       CloudflareImage.objects.register_uploaded(
+           cloudflare_id, user=request.user, expected_creator=str(request.user.pk)
+       )
+   except ImageOwnershipError as e:
+       print(f"Not your image: {e}")
 
 Utility APIs
 ------------
