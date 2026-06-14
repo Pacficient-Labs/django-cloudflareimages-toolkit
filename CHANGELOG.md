@@ -37,6 +37,9 @@ Release notes are also published on
   uploader's id) to require the Cloudflare `creator` to match before any local
   row is created, raising `ImageOwnershipError` otherwise — this stops a caller
   registering another user's completed image by submitting an arbitrary id.
+  `ImageOwnershipError` is also raised when the `cloudflare_id` is already
+  tracked locally for a different user, so the method never returns another
+  user's record.
 - New `ImageNotReadyError` and `ImageOwnershipError` exceptions, exported from
   the package root alongside `ImageMetadataFactory`.
 
@@ -64,6 +67,9 @@ Release notes are also published on
   `CloudflareImagesError` (service) instead of a 500 from the defaults merge.
 - `register_uploaded` mirrors Cloudflare's `meta` into the queryable `metadata`
   field, so registered rows are filterable via `metadata__...` as documented.
+- The upload endpoint's `creator` field accepts an empty string (`allow_blank`),
+  so an API caller can send `""` to force an untagged upload that bypasses
+  `DEFAULT_CREATOR` (previously a `400`).
 - Migration `0002` backfills the new `creator` column with an explicit empty
   string so existing rows upgrade cleanly on every database backend.
 

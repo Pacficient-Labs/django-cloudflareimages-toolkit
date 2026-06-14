@@ -45,7 +45,9 @@ the Cloudflare response. It raises `ImageNotFoundError` (missing) or
 `ImageNotReadyError` (still a draft) instead of trusting the input. Pass
 `expected_creator` to require the Cloudflare `creator` to equal a known owner
 token (e.g. the uploader's id); a mismatch raises `ImageOwnershipError` before
-any row is created.
+any row is created. `ImageOwnershipError` is also raised if the `cloudflare_id`
+is already tracked locally for a different `user`, so the method never hands a
+caller another user's record.
 
 > ⚠️ Do **not** call `CloudflareImage.objects.get_or_create(cloudflare_id=<client value>)`
 > directly: the ID may not exist, may still be a draft, or belong to another

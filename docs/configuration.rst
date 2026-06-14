@@ -58,7 +58,7 @@ per-request parameters always win.
 - **REQUIRE_SIGNED_URLS**: Whether uploads require signed URLs for delivery (default: ``True``)
 - **DEFAULT_EXPIRY_MINUTES**: Default upload URL expiry in minutes (default: ``30``)
 - **DEFAULT_METADATA**: Default metadata merged *underneath* any per-request metadata; per-request keys win (default: ``{}``)
-- **DEFAULT_CREATOR**: Default Cloudflare ``creator`` value applied when no ``creator`` is passed per request (default: ``None``)
+- **DEFAULT_CREATOR**: Default Cloudflare ``creator`` value applied when no ``creator`` is passed per request (default: ``None``). Pass an explicit empty string (``creator=""``, or ``"creator": ""`` on the REST endpoint) to force an untagged upload that bypasses this default.
 - **METADATA_FACTORY**: A dotted import path string, a class, an instance, or any callable, resolved via Django's ``import_string``. Receives the resolved metadata plus upload context and returns the final metadata dict. See :doc:`usage` for the ``ImageMetadataFactory`` API (default: ``None``)
 
 .. note::

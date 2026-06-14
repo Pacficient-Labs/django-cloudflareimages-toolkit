@@ -78,7 +78,7 @@ instantiated, and a plain callable/instance is returned as-is. Raises
 | `DEFAULT_EXPIRY_MINUTES` | `int` | `30` | No | Default upload URL lifetime. |
 | `REQUIRE_SIGNED_URLS` | `bool` | `True` | No | Default signed URL requirement flag. |
 | `DEFAULT_METADATA` | `dict` | `{}` | No | Metadata merged underneath per-request metadata (per-request keys win). |
-| `DEFAULT_CREATOR` | `str \| None` | `None` | No | Default Cloudflare `creator` value for uploads. |
+| `DEFAULT_CREATOR` | `str \| None` | `None` | No | Default Cloudflare `creator` value for uploads. Pass `creator=""` per request to bypass it. |
 | `METADATA_FACTORY` | dotted path / class / instance / callable | `None` | No | Programmatic upload-metadata factory; see `get_metadata_factory()`. |
 | `WEBHOOK_SECRET` | `str \| None` | `None` | No | HMAC secret for webhook validation. |
 | `MAX_FILE_SIZE_MB` | `int` | `10` | No | Configurable file size limit accessor. |

@@ -149,9 +149,10 @@ variants, metadata (Cloudflare's `meta` is mirrored into both `metadata` and
 `update_from_cloudflare_response()`. Writes an `image_registered`
 `ImageUploadLog`. Raises `ImageNotFoundError` if the image is missing or
 `ImageNotReadyError` if it is still a draft (no local row is created on either).
-When `expected_creator` is supplied, the Cloudflare `creator` must equal it or
-`ImageOwnershipError` is raised before any row is created — pass it to stop a
-caller registering another user's image by submitting an arbitrary id. This
+`ImageOwnershipError` is raised — before the row is returned — in two cases: when
+`expected_creator` is supplied and the Cloudflare `creator` does not equal it,
+and when the `cloudflare_id` is already tracked locally for a *different* `user`
+(so a caller can never be handed another user's record). This
 method backs the `CloudflareImage.objects.register_uploaded()` manager helper and
 is the recommended alternative to a raw `get_or_create(cloudflare_id=...)`.
 
@@ -194,7 +195,7 @@ Looks up the local row by `payload["id"]`, applies `update_from_cloudflare_respo
 
 ## Error Behavior
 
-Remote request failures raise `CloudflareImagesError`. HTTP success with a Cloudflare response that sets `"success": false` also raises `CloudflareImagesError` with the concatenated Cloudflare error messages. Three cases are typed subclasses of `CloudflareImagesError`: a Cloudflare 404 from `get_image`/`register_uploaded_image` raises `ImageNotFoundError`, a still-draft image in `register_uploaded_image` raises `ImageNotReadyError`, and an `expected_creator` mismatch in `register_uploaded_image` raises `ImageOwnershipError`.
+Remote request failures raise `CloudflareImagesError`. HTTP success with a Cloudflare response that sets `"success": false` also raises `CloudflareImagesError` with the concatenated Cloudflare error messages. Three cases are typed subclasses of `CloudflareImagesError`: a Cloudflare 404 from `get_image`/`register_uploaded_image` raises `ImageNotFoundError`, a still-draft image in `register_uploaded_image` raises `ImageNotReadyError`, and an `expected_creator` mismatch — or a `cloudflare_id` already registered to a different user — in `register_uploaded_image` raises `ImageOwnershipError`.
 
 ## Common Pattern
 

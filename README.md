@@ -235,7 +235,9 @@ print(f"Expires at: {image.expires_at}")
 ```
 
 Any argument you omit falls back to its settings default (`DEFAULT_METADATA`,
-`DEFAULT_CREATOR`, `REQUIRE_SIGNED_URLS`, `DEFAULT_EXPIRY_MINUTES`). The resolved
+`DEFAULT_CREATOR`, `REQUIRE_SIGNED_URLS`, `DEFAULT_EXPIRY_MINUTES`). To bypass
+`DEFAULT_CREATOR` for a single upload, pass an explicit empty string
+(`creator=''`, or `"creator": ""` on the REST endpoint). The resolved
 `metadata` and `creator` are sent to Cloudflare's
 `/images/v2/direct_upload` endpoint and round-tripped onto the local
 `CloudflareImage` record, so they are queryable from Django:
@@ -366,6 +368,10 @@ try:
 except ImageOwnershipError:
     ...  # the image belongs to a different creator
 ```
+
+`ImageOwnershipError` is also raised if the `cloudflare_id` is already registered
+locally to a *different* user, so `register_uploaded` never hands a caller back
+someone else's record — even without `expected_creator`.
 
 ### Management Commands
 

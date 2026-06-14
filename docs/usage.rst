@@ -85,7 +85,9 @@ It is persisted on the local row and is queryable:
    # The creator is stored on the model and indexed for filtering.
    CloudflareImage.objects.filter(creator="user-123")
 
-When ``creator`` is omitted, the ``DEFAULT_CREATOR`` setting is used.
+When ``creator`` is omitted, the ``DEFAULT_CREATOR`` setting is used. Pass an
+explicit empty string (``creator=""``) — also accepted by the REST endpoint — to
+force an untagged upload that bypasses ``DEFAULT_CREATOR``.
 
 Customizing metadata with a factory
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

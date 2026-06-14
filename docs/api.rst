@@ -273,7 +273,9 @@ variants, metadata, and creator. No local row is created on failure.
 
 * ``ImageNotFoundError``: When the image does not exist in Cloudflare
 * ``ImageNotReadyError``: When the image exists but is still a draft
-* ``ImageOwnershipError``: When ``expected_creator`` does not match the image's creator
+* ``ImageOwnershipError``: When ``expected_creator`` does not match the image's
+  creator, or when the ``cloudflare_id`` is already registered locally to a
+  different ``user``
 
 **Example:**
 
