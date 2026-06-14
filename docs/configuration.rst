@@ -35,19 +35,16 @@ You can customize additional behavior with these optional settings:
        'ACCOUNT_ID': 'your-account-id',
        'API_TOKEN': 'your-api-token',
        'ACCOUNT_HASH': 'your-account-hash',
-       
+
        # Optional settings
-       'DEFAULT_VARIANT': 'public',           # Default image variant for URLs
-       'UPLOAD_TIMEOUT': 300,                 # Upload timeout in seconds
-       'WEBHOOK_SECRET': 'your-webhook-secret', # For webhook verification
-       'CLEANUP_EXPIRED_HOURS': 24,           # Hours before cleaning up expired uploads
-       'MAX_FILE_SIZE': 10 * 1024 * 1024,     # Maximum file size (10MB default)
-       'ALLOWED_FORMATS': ['jpeg', 'png', 'gif', 'webp'],  # Allowed image formats
-       'REQUIRE_SIGNED_URLS': False,          # Whether to require signed URLs
-       'DEFAULT_EXPIRY_MINUTES': 30,          # Default upload URL expiry (minutes)
-       'DEFAULT_METADATA': {},                # Default metadata for uploads
+       'BASE_URL': 'https://api.cloudflare.com/client/v4',  # API base URL override
+       'DEFAULT_EXPIRY_MINUTES': 30,          # Default upload URL expiry (2-360 minutes)
+       'REQUIRE_SIGNED_URLS': True,           # Whether uploads require signed URLs
+       'DEFAULT_METADATA': {},                # Default metadata (merged under per-request)
        'DEFAULT_CREATOR': None,               # Default Cloudflare "creator" value
        'METADATA_FACTORY': None,              # Dotted path / callable for metadata
+       'WEBHOOK_SECRET': 'your-webhook-secret', # For webhook signature verification
+       'MAX_FILE_SIZE_MB': 10,                # Maximum file size accessor (MB)
    }
 
 Upload Defaults
@@ -110,19 +107,32 @@ Model Fields
 .. code-block:: python
 
    class CloudflareImage(models.Model):
-       cloudflare_id = models.CharField(max_length=255, unique=True)
-       filename = models.CharField(max_length=255)
-       uploaded_at = models.DateTimeField(auto_now_add=True)
+       id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+       cloudflare_id = models.CharField(max_length=255, unique=True, db_index=True)
+       user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                on_delete=models.CASCADE, related_name='cloudflare_images')
+       filename = models.CharField(max_length=255, blank=True)
+       original_filename = models.CharField(max_length=255, blank=True)
+       content_type = models.CharField(max_length=100, blank=True)
        file_size = models.PositiveIntegerField(null=True, blank=True)
+       upload_url = models.URLField(max_length=500)
+       status = models.CharField(max_length=20, choices=ImageUploadStatus.choices,
+                                 default=ImageUploadStatus.PENDING)
+       require_signed_urls = models.BooleanField(default=True)
+       metadata = models.JSONField(default=dict, blank=True)
+       creator = models.CharField(max_length=255, blank=True, db_index=True)
+       created_at = models.DateTimeField(auto_now_add=True)
+       updated_at = models.DateTimeField(auto_now=True)
+       uploaded_at = models.DateTimeField(null=True, blank=True)
+       expires_at = models.DateTimeField()
        width = models.PositiveIntegerField(null=True, blank=True)
        height = models.PositiveIntegerField(null=True, blank=True)
        format = models.CharField(max_length=10, blank=True)
-       variants = models.JSONField(default=dict, blank=True)
-       metadata = models.JSONField(default=dict, blank=True)
-       creator = models.CharField(max_length=255, blank=True, db_index=True)
-       is_ready = models.BooleanField(default=False)
-       upload_url = models.URLField(blank=True)
-       upload_expires_at = models.DateTimeField(null=True, blank=True)
+       variants = models.JSONField(default=list, blank=True)
+       cloudflare_metadata = models.JSONField(default=dict, blank=True)
+
+   # ``is_ready``, ``is_uploaded``, ``is_expired``, ``public_url`` and
+   # ``thumbnail_url`` are read-only properties on the model, not DB fields.
 
 Django Admin Integration
 ------------------------
@@ -156,8 +166,8 @@ You can customize the admin interface:
    # Register with custom configuration
    @admin.register(CloudflareImage)
    class CustomCloudflareImageAdmin(CloudflareImageAdmin):
-       list_display = ['filename', 'uploaded_at', 'file_size', 'is_ready']
-       list_filter = ['is_ready', 'format', 'uploaded_at']
+       list_display = ['filename', 'uploaded_at', 'file_size', 'status']
+       list_filter = ['status', 'require_signed_urls', 'uploaded_at']
        search_fields = ['filename', 'cloudflare_id']
 
 Image Variants Configuration
@@ -168,33 +178,33 @@ Cloudflare Images supports variants for different image sizes and formats:
 Creating Variants
 ~~~~~~~~~~~~~~~~~
 
-Create variants in your Cloudflare Images dashboard or via API:
+Named variants (e.g. ``thumbnail``, ``avatar``) are defined in your Cloudflare
+Images dashboard. Cloudflare returns their delivery URLs on each image, which
+the toolkit stores in ``CloudflareImage.variants`` and exposes via helpers:
 
 .. code-block:: python
 
-   from django_cloudflareimages_toolkit.services import CloudflareImagesService
-   
-   service = CloudflareImagesService()
-   
-   # Create a thumbnail variant
-   service.create_variant(
-       variant_id='thumbnail',
-       options={
-           'fit': 'scale-down',
-           'width': 200,
-           'height': 200,
-       }
-   )
+   image.public_url            # the "public" variant URL
+   image.thumbnail_url         # the "thumbnail" variant URL
+   image.get_url('avatar')     # any named variant (None until uploaded)
+
+For on-the-fly resizing you can also build flexible-variant URLs without
+predefining them (see :doc:`usage` and the transformation template tags).
 
 Using Variants in Templates
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: html
+.. code-block:: django
 
-   <!-- In your Django templates -->
-   <img src="{{ image.get_url }}" alt="Original image">
-   <img src="{{ image.get_url:'thumbnail' }}" alt="Thumbnail">
-   <img src="{{ image.get_url:'avatar' }}" alt="Avatar">
+   {% load cloudflare_images %}
+
+   <!-- Named-variant URLs from the model -->
+   <img src="{{ image.public_url }}" alt="Public">
+   <img src="{{ image.thumbnail_url }}" alt="Thumbnail">
+
+   <!-- On-the-fly transformations via template tags -->
+   {% cf_thumbnail image.public_url 200 %}
+   {% cf_avatar image.public_url 100 %}
 
 Webhook Configuration
 ---------------------
@@ -263,7 +273,7 @@ Advanced Configuration
        image = CloudflareImageField(
            variants=['thumbnail', 'large'],  # Specific variants to create
            metadata={'category': 'product'},  # Default metadata
-           required_signed_urls=True,         # Require signed URLs
+           require_signed_urls=True,          # Require signed URLs
        )
 
 Security Configuration
@@ -298,16 +308,19 @@ Token Security
 Upload Security
 ~~~~~~~~~~~~~~~
 
-Configure upload restrictions:
+Require signed URLs by default and expose a configurable maximum file size:
 
 .. code-block:: python
 
    CLOUDFLARE_IMAGES = {
        # ... other settings
-       'MAX_FILE_SIZE': 5 * 1024 * 1024,  # 5MB limit
-       'ALLOWED_FORMATS': ['jpeg', 'png'],  # Only JPEG and PNG
-       'REQUIRE_SIGNED_URLS': True,        # Require signed URLs for access
+       'REQUIRE_SIGNED_URLS': True,  # Require signed URLs for delivery by default
+       'MAX_FILE_SIZE_MB': 5,        # Configurable maximum file size accessor (MB)
    }
+
+``REQUIRE_SIGNED_URLS`` is the per-upload default (override per request via
+``create_direct_upload_url(require_signed_urls=...)``). ``MAX_FILE_SIZE_MB`` is
+read via ``cloudflare_settings.max_file_size_mb`` for your own validation.
 
 Logging Configuration
 ---------------------
@@ -363,23 +376,25 @@ For testing environments:
            'API_TOKEN': 'test-api-token',
            'ACCOUNT_HASH': 'test-account-hash',
        }
-       
-       # Or mock the service entirely
-       CLOUDFLARE_IMAGES_MOCK = True
 
-Performance Configuration
--------------------------
+In tests, mock Cloudflare at the HTTP boundary (for example with the
+``responses`` library) rather than monkeypatching the service, so the real
+request/response handling is still exercised.
 
-Optimize performance with these settings:
+Housekeeping
+------------
+
+Keep upload-URL lifetimes short and clean up stale rows:
 
 .. code-block:: python
 
    CLOUDFLARE_IMAGES = {
        # ... other settings
-       'UPLOAD_TIMEOUT': 60,           # Shorter timeout for faster failures
-       'CLEANUP_EXPIRED_HOURS': 1,     # More frequent cleanup
-       'DEFAULT_VARIANT': 'optimized', # Use optimized variant by default
+       'DEFAULT_EXPIRY_MINUTES': 30,  # Upload URLs expire 2-360 minutes out
    }
+
+Expired upload slots are reconciled with the ``cleanup_expired_images``
+management command (see :doc:`usage`).
 
 Best Practices
 --------------

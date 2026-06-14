@@ -92,12 +92,10 @@ class ImageNotReadyError(CloudflareImagesError):
     """
     Exception raised when an image exists but is not ready to be registered.
 
-    This exception is raised when:
-    - The image is still a draft (the upload URL was created but no bytes
-      have been uploaded yet, so ``draft`` is still ``True``)
-
-    It signals that the ``cloudflare_id`` is real but the upload has not
-    completed, so it must not be trusted as a finished image.
+    This is raised when the image is still a draft -- the upload URL was
+    created but no bytes have been uploaded yet, so Cloudflare still reports
+    ``draft`` as ``True``. It signals that the ``cloudflare_id`` is real but
+    the upload has not completed, so it must not be trusted as finished.
     """
 
 
