@@ -43,16 +43,29 @@ Release notes are also published on
 ### Changed
 
 - `update_from_cloudflare_response` now also maps Cloudflare's `creator` and
-  `filename`, and accepts `meta` as an alias for `metadata`.
+  `filename`, accepts `meta` as an alias for `metadata`, and parses Cloudflare's
+  `uploaded` timestamp instead of stamping the current time (so registering or
+  re-syncing a previously uploaded image keeps the real upload time and the
+  `uploaded_after`/`uploaded_before` filters stay correct).
 - `get_image` now raises `ImageNotFoundError` (a `CloudflareImagesError`
   subclass) on a Cloudflare 404, so existing `except CloudflareImagesError`
   handlers keep working.
+- The `creator` column is `max_length=255` and indexed. The service rejects an
+  over-length `creator` before the Cloudflare request (so an upload is never
+  left untracked), and truncates longer `creator` values returned for
+  externally-created images on registration.
 
 ### Fixed
 
 - `CreateUploadURLView` no longer risks an unexpected-keyword `TypeError` when a
   client supplies `filename`; it is now extracted before delegating to the
   service.
+- Non-dict `metadata` is rejected with a clean 400 (serializer) / typed
+  `CloudflareImagesError` (service) instead of a 500 from the defaults merge.
+- `register_uploaded` mirrors Cloudflare's `meta` into the queryable `metadata`
+  field, so registered rows are filterable via `metadata__...` as documented.
+- Migration `0002` backfills the new `creator` column with an explicit empty
+  string so existing rows upgrade cleanly on every database backend.
 
 ### Security
 

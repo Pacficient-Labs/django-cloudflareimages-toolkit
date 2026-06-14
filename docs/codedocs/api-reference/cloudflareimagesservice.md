@@ -92,7 +92,7 @@ def create_direct_upload_url(
 | `metadata` | `dict[str, Any] \| None` | settings default | Merged on top of `DEFAULT_METADATA` (per-request keys win), then passed through `METADATA_FACTORY` if configured. Stored locally and sent to Cloudflare. Must be a dict. |
 | `require_signed_urls` | `bool \| None` | settings default | Overrides `CLOUDFLARE_IMAGES["REQUIRE_SIGNED_URLS"]`. |
 | `expiry_minutes` | `int \| None` | settings default | Clamped to `2..360` minutes before the request is sent. |
-| `creator` | `str \| None` | `DEFAULT_CREATOR` | Cloudflare `creator` value; sent in the multipart request and stored on `CloudflareImage.creator`. |
+| `creator` | `str \| None` | `DEFAULT_CREATOR` | Cloudflare `creator` value; sent in the multipart request and stored on `CloudflareImage.creator`. Rejected with `CloudflareImagesError` if longer than 255 chars (the indexed column cap). |
 
 Defaults are resolved for any argument left as `None`. The metadata precedence,
 lowest to highest, is `DEFAULT_METADATA` < per-request `metadata` <

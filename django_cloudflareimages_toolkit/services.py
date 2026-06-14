@@ -20,7 +20,12 @@ from .exceptions import (
     ImageNotReadyError,
     ImageOwnershipError,
 )
-from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
+from .models import (
+    CREATOR_MAX_LENGTH,
+    CloudflareImage,
+    ImageUploadLog,
+    ImageUploadStatus,
+)
 from .settings import cloudflare_settings
 
 logger = logging.getLogger(__name__)
@@ -139,6 +144,13 @@ class CloudflareImagesService:
 
         if creator is None:
             creator = cloudflare_settings.default_creator
+
+        # Reject an over-length creator before the Cloudflare request so we never
+        # complete an upload we can't persist locally (the column caps at 255).
+        if creator and len(creator) > CREATOR_MAX_LENGTH:
+            raise CloudflareImagesError(
+                f"creator exceeds {CREATOR_MAX_LENGTH} characters"
+            )
 
         # Give a configured metadata factory the final say. As trusted
         # server-side code it may augment or override the resolved metadata.

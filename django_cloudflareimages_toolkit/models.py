@@ -15,6 +15,13 @@ from django.utils.dateparse import parse_datetime
 
 User = get_user_model()
 
+# Max length of the indexed ``creator`` column. Kept at 255 so the index stays
+# within InnoDB's key-length limit under MySQL/utf8mb4 (a 1024-char utf8mb4
+# column needs 4096 bytes, over the 3072-byte cap). Cloudflare allows longer
+# creator values; the service rejects over-length creators on upload and
+# truncates longer values returned for externally-created images on register.
+CREATOR_MAX_LENGTH = 255
+
 
 class ImageUploadStatus(models.TextChoices):
     """Status choices for image uploads."""
@@ -101,10 +108,9 @@ class CloudflareImage(models.Model):
     require_signed_urls = models.BooleanField(default=True)
     metadata = models.JSONField(default=dict, blank=True)
     # Cloudflare "creator" field: associates the image with a creator/user.
-    # Indexed so records can be queried by creator from Django. Capped at 255 so
-    # the index stays within InnoDB's key-length limit under MySQL/utf8mb4
-    # (a 1024-char utf8mb4 column needs 4096 bytes, over the 3072-byte cap).
-    creator = models.CharField(max_length=255, blank=True, db_index=True)
+    # Indexed so records can be queried by creator from Django. See
+    # CREATOR_MAX_LENGTH for why the length is capped.
+    creator = models.CharField(max_length=CREATOR_MAX_LENGTH, blank=True, db_index=True)
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -254,7 +260,10 @@ class CloudflareImage(models.Model):
             self.cloudflare_metadata = response_data["meta"]
 
         if response_data.get("creator"):
-            self.creator = response_data["creator"]
+            # Images created outside this toolkit may carry a creator longer
+            # than our indexed column; truncate so the save can't fail and leave
+            # the image untracked. Ownership checks compare the full CF value.
+            self.creator = response_data["creator"][:CREATOR_MAX_LENGTH]
 
         if response_data.get("filename"):
             self.filename = response_data["filename"]

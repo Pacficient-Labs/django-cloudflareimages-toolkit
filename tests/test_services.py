@@ -165,6 +165,14 @@ class TestUploadDefaults:
         assert responses.calls[-1].request.url == DIRECT_UPLOAD_URL
 
     @responses.activate
+    def test_over_length_creator_rejected_before_request(self, user):
+        """A creator longer than the column cap is rejected before the CF call."""
+        _mock_direct_upload()
+        with pytest.raises(CloudflareImagesError):
+            cloudflare_service.create_direct_upload_url(user=user, creator="x" * 256)
+        assert len(responses.calls) == 0
+
+    @responses.activate
     def test_non_dict_metadata_raises_typed_error_not_500(self, user):
         """A non-dict metadata is rejected before the spread-merge (no TypeError)."""
         _mock_direct_upload()
