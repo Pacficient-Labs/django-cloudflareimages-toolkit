@@ -7,7 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release notes are also published on
 [GitHub Releases](https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/releases).
 
-## [1.1.0]
+## [1.1.0] - 2026-06-14
 
 ### Added
 
@@ -84,3 +84,5 @@ Release notes are also published on
 - Documented that `get_or_create(cloudflare_id=<client value>)` is unsafe and
   pointed consumers at `register_uploaded`, which validates against Cloudflare
   before persisting.
+
+[1.1.0]: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/compare/v1.0.14...v1.1.0
