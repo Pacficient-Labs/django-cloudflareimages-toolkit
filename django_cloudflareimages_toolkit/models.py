@@ -11,6 +11,7 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.db import models
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 User = get_user_model()
 
@@ -230,7 +231,13 @@ class CloudflareImage(models.Model):
     def update_from_cloudflare_response(self, response_data: dict[str, Any]) -> None:
         """Update model fields from Cloudflare API response."""
         if "uploaded" in response_data:
-            self.uploaded_at = timezone.now()
+            # Prefer Cloudflare's own upload timestamp so registering or
+            # re-syncing a previously uploaded image doesn't overwrite the real
+            # time with "now" (which would corrupt uploaded_after/before filters).
+            uploaded = response_data["uploaded"]
+            if isinstance(uploaded, str):
+                uploaded = parse_datetime(uploaded)
+            self.uploaded_at = uploaded or self.uploaded_at or timezone.now()
             self.status = ImageUploadStatus.UPLOADED
 
         if "draft" in response_data and response_data["draft"]:

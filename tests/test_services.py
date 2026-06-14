@@ -17,6 +17,8 @@ mutating the dict the singleton snapshots, mirroring tests/test_webhook_view.py.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 import responses
 from django.contrib.auth import get_user_model
@@ -304,6 +306,8 @@ class TestRegisterUploaded:
         assert image.cloudflare_metadata == {"origin": "mobile"}
         # CF "meta" is mirrored into the queryable metadata field.
         assert image.metadata == {"origin": "mobile"}
+        # Cloudflare's own upload timestamp is preserved (not overwritten by now).
+        assert image.uploaded_at == datetime(2025, 1, 1, tzinfo=timezone.utc)
         assert len(image.variants) == 2
         assert image.public_url.endswith("/public")
         # Persisted and queryable, including by the mirrored metadata.

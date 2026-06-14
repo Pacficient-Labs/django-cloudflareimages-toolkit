@@ -10,6 +10,11 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="cloudflareimage",
             name="creator",
-            field=models.CharField(blank=True, db_index=True, max_length=255),
+            # Explicit empty-string default backfills existing rows on every
+            # backend; preserve_default=False keeps the model field default-free.
+            field=models.CharField(
+                blank=True, db_index=True, default="", max_length=255
+            ),
+            preserve_default=False,
         ),
     ]
