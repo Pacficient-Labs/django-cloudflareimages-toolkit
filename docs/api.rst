@@ -276,6 +276,8 @@ variants, metadata, and creator. No local row is created on failure.
 * ``ImageOwnershipError``: When ``expected_creator`` does not match the image's
   creator, or when the ``cloudflare_id`` is already registered locally to a
   different ``user``
+* ``CloudflareImagesError``: When the ``cloudflare_id`` is longer than the local
+  column (255), or for other Cloudflare API failures
 
 **Example:**
 

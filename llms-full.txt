@@ -766,7 +766,8 @@ token (e.g. the uploader's id) before any row is created.
 **Raises**:
 - `ImageNotFoundError`: the image does not exist in Cloudflare
 - `ImageNotReadyError`: the image exists but is still a draft
-- `ImageOwnershipError`: `expected_creator` does not match the image's creator
+- `ImageOwnershipError`: `expected_creator` does not match the image's creator, or the `cloudflare_id` is already registered to a different user
+- `CloudflareImagesError`: the `cloudflare_id` exceeds the local column length (255), or another Cloudflare API failure
 
 #### check_image_status()
 ```python
