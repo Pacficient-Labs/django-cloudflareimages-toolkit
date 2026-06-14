@@ -103,12 +103,27 @@ function getCookie(name) {
 
 </Step>
 <Step>
-### Reconcile the local row
+### Confirm and persist the upload
 
-Use webhooks for normal completion, or poll on demand:
+Once the browser PUT to Cloudflare completes, confirm the upload server-side with `CloudflareImage.objects.register_uploaded(cloudflare_id, user=...)`. It fetches the image from Cloudflare, raises `ImageNotFoundError` if the ID is unknown, raises `ImageNotReadyError` while Cloudflare still reports the image as a draft, and only then creates or updates the local row from the authoritative Cloudflare response:
 
 ```python
+from django_cloudflareimages_toolkit.exceptions import (
+    ImageNotFoundError,
+    ImageNotReadyError,
+)
 from django_cloudflareimages_toolkit.models import CloudflareImage
+
+
+def confirm_upload(cloudflare_id: str, user) -> CloudflareImage:
+    return CloudflareImage.objects.register_uploaded(cloudflare_id, user=user)
+```
+
+<Callout type="warn">Do not call `CloudflareImage.objects.get_or_create(cloudflare_id=<client value>)` directly. That trusts a client-supplied ID and creates a local row for an image that may not exist or may not belong to the caller. `register_uploaded()` is the recommended path because it verifies the image with Cloudflare before persisting.</Callout>
+
+For normal completion you can still rely on webhooks, or poll on demand:
+
+```python
 from django_cloudflareimages_toolkit.services import cloudflare_service
 
 

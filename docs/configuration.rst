@@ -44,8 +44,34 @@ You can customize additional behavior with these optional settings:
        'MAX_FILE_SIZE': 10 * 1024 * 1024,     # Maximum file size (10MB default)
        'ALLOWED_FORMATS': ['jpeg', 'png', 'gif', 'webp'],  # Allowed image formats
        'REQUIRE_SIGNED_URLS': False,          # Whether to require signed URLs
+       'DEFAULT_EXPIRY_MINUTES': 30,          # Default upload URL expiry (minutes)
        'DEFAULT_METADATA': {},                # Default metadata for uploads
+       'DEFAULT_CREATOR': None,               # Default Cloudflare "creator" value
+       'METADATA_FACTORY': None,              # Dotted path / callable for metadata
    }
+
+Upload Defaults
+~~~~~~~~~~~~~~~
+
+These settings provide defaults for the direct upload service. Any value
+passed explicitly to ``cloudflare_service.create_direct_upload_url()`` (or
+``get_direct_upload_url()``) overrides the corresponding settings default —
+per-request parameters always win.
+
+- **REQUIRE_SIGNED_URLS**: Whether uploads require signed URLs for delivery (default: ``True``)
+- **DEFAULT_EXPIRY_MINUTES**: Default upload URL expiry in minutes (default: ``30``)
+- **DEFAULT_METADATA**: Default metadata merged *underneath* any per-request metadata; per-request keys win (default: ``{}``)
+- **DEFAULT_CREATOR**: Default Cloudflare ``creator`` value applied when no ``creator`` is passed per request (default: ``None``)
+- **METADATA_FACTORY**: A dotted import path string, a class, an instance, or any callable, resolved via Django's ``import_string``. Receives the resolved metadata plus upload context and returns the final metadata dict. See :doc:`usage` for the ``ImageMetadataFactory`` API (default: ``None``)
+
+.. note::
+
+   The merge precedence for metadata, lowest to highest, is::
+
+      DEFAULT_METADATA < per-request metadata < factory output
+
+   The factory is trusted server-side code and has the final say, so it can
+   augment or override keys supplied by the client.
 
 Environment Variables
 ---------------------
@@ -93,6 +119,7 @@ Model Fields
        format = models.CharField(max_length=10, blank=True)
        variants = models.JSONField(default=dict, blank=True)
        metadata = models.JSONField(default=dict, blank=True)
+       creator = models.CharField(max_length=255, blank=True, db_index=True)
        is_ready = models.BooleanField(default=False)
        upload_url = models.URLField(blank=True)
        upload_expires_at = models.DateTimeField(null=True, blank=True)

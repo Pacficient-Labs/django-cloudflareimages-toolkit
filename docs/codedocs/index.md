@@ -123,7 +123,9 @@ python manage.py migrate
 - Django 4.2+ support with Python 3.10+ and typed package metadata in `pyproject.toml`.
 - A lazy top-level package export strategy in `django_cloudflareimages_toolkit/__init__.py` so transformation utilities import without a configured Django app.
 - A thread-local `requests.Session` in `django_cloudflareimages_toolkit/services.py` so concurrent callers do not share mutable session state.
-- Local tracking models and logs in `django_cloudflareimages_toolkit/models.py` for pending, draft, uploaded, failed, and expired uploads.
+- Local tracking models and logs in `django_cloudflareimages_toolkit/models.py` for pending, draft, uploaded, failed, and expired uploads, including a queryable `creator` field.
+- A pluggable metadata pipeline in `django_cloudflareimages_toolkit/metadata.py` with `DEFAULT_METADATA`, `DEFAULT_CREATOR`, and a `METADATA_FACTORY` extension point that gets the final say on per-upload metadata.
+- Safe server-side confirmation of browser uploads via `CloudflareImage.objects.register_uploaded()`, which verifies the image with Cloudflare before persisting a local row.
 - Template tags and helper builders in `django_cloudflareimages_toolkit/templatetags/cloudflare_images.py` and `django_cloudflareimages_toolkit/transformations.py` for responsive delivery URLs.
 - Built-in DRF routes, webhook validation, Django admin integration, and an expired-upload cleanup command.
 

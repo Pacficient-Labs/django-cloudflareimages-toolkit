@@ -109,7 +109,20 @@ You can customize additional settings:
        'UPLOAD_TIMEOUT': 300,        # Upload timeout in seconds
        'WEBHOOK_SECRET': 'your-webhook-secret',  # For webhook verification
        'CLEANUP_EXPIRED_HOURS': 24,  # Hours before cleaning up expired uploads
+
+       # Upload defaults (per-request parameters override these)
+       'REQUIRE_SIGNED_URLS': True,  # Whether uploads require signed URLs
+       'DEFAULT_EXPIRY_MINUTES': 30, # Default upload URL expiry (minutes)
+       'DEFAULT_METADATA': {},       # Default metadata merged under per-request metadata
+       'DEFAULT_CREATOR': None,      # Default Cloudflare "creator" value
+       'METADATA_FACTORY': None,     # Dotted path / class / instance / callable for metadata
    }
+
+The upload defaults (``REQUIRE_SIGNED_URLS``, ``DEFAULT_EXPIRY_MINUTES``,
+``DEFAULT_METADATA``, ``DEFAULT_CREATOR``, ``METADATA_FACTORY``) provide
+fallbacks for the direct upload service. Any value passed explicitly per
+request overrides the corresponding settings default. See
+:doc:`configuration` for the full reference.
 
 Webhook Configuration (Optional)
 --------------------------------

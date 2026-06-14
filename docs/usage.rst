@@ -52,6 +52,84 @@ Generating a direct upload URL
    print(image.cloudflare_id)   # e.g. "2cdc28f0-017a-49c4-9ed7-..."
    print(image.upload_url)      # one-time URL — POST the file here
 
+The full signature is::
+
+   create_direct_upload_url(
+       user=None,
+       custom_id=None,
+       metadata=None,
+       require_signed_urls=None,
+       expiry_minutes=None,
+       creator=None,
+   )
+
+Any argument left as ``None`` falls back to its settings default
+(``REQUIRE_SIGNED_URLS``, ``DEFAULT_EXPIRY_MINUTES``, ``DEFAULT_METADATA``,
+``DEFAULT_CREATOR``). The resolved metadata and creator are sent to
+Cloudflare's ``/images/v2/direct_upload`` call and round-tripped onto the
+local ``CloudflareImage`` row.
+
+Tagging uploads with a creator
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Pass ``creator`` to associate an upload with a Cloudflare "creator" value.
+It is persisted on the local row and is queryable:
+
+.. code-block:: python
+
+   image = cloudflare_service.create_direct_upload_url(
+       user=request.user,
+       creator="user-123",
+   )
+
+   # The creator is stored on the model and indexed for filtering.
+   CloudflareImage.objects.filter(creator="user-123")
+
+When ``creator`` is omitted, the ``DEFAULT_CREATOR`` setting is used.
+
+Customizing metadata with a factory
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For server-side control over the metadata attached to every upload,
+configure a metadata factory. Subclass ``ImageMetadataFactory`` and
+override ``get_metadata``:
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import ImageMetadataFactory
+
+   class TenantMetadataFactory(ImageMetadataFactory):
+       def get_metadata(self, *, metadata, user=None, **context):
+           if user is not None:
+               metadata['uploaded_by'] = str(user.pk)
+           metadata['source'] = 'web'
+           return metadata
+
+The signature you override is::
+
+   def get_metadata(self, *, metadata, user=None, custom_id=None,
+                    creator=None, **context) -> dict
+
+Factory instances are callable. Register it via the ``METADATA_FACTORY``
+setting (a dotted import path string, a class, an instance, or any callable):
+
+.. code-block:: python
+
+   CLOUDFLARE_IMAGES = {
+       # ... other settings
+       'METADATA_FACTORY': 'myapp.factories.TenantMetadataFactory',
+   }
+
+The factory receives the already-resolved metadata (``DEFAULT_METADATA``
+merged with per-request metadata) plus upload context, and returns the
+final metadata dict that is sent to Cloudflare and persisted. The merge
+precedence, lowest to highest, is::
+
+   DEFAULT_METADATA < per-request metadata < factory output
+
+The factory is trusted server-side code and has the final say — it can
+augment or override keys supplied by the client.
+
 Server-side: uploading a local file from disk
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -249,6 +327,12 @@ Upload URL Generation
 Image Saving
 ~~~~~~~~~~~~
 
+When a client reports back the ``cloudflare_id`` it uploaded, use
+``CloudflareImage.objects.register_uploaded`` to register it safely. The
+manager fetches the image from Cloudflare, confirms it exists and that its
+draft state is cleared, then creates (or returns) the local record
+populated with status, variants, metadata, and creator.
+
 .. code-block:: python
 
    import json
@@ -256,29 +340,43 @@ Image Saving
    from django.views.decorators.csrf import csrf_exempt
    from django.contrib.auth.decorators import login_required
    from django_cloudflareimages_toolkit.models import CloudflareImage
-   
+   from django_cloudflareimages_toolkit.exceptions import (
+       ImageNotFoundError, ImageNotReadyError,
+   )
+
    @csrf_exempt
    @login_required
    def save_image(request):
        if request.method == 'POST':
+           data = json.loads(request.body)
            try:
-               data = json.loads(request.body)
-               
-               image = CloudflareImage.objects.create(
-                   cloudflare_id=data['cloudflare_id'],
-                   filename=data['filename'],
-                   uploaded_by=request.user  # If you have this field
+               image = CloudflareImage.objects.register_uploaded(
+                   data['cloudflare_id'],
+                   user=request.user,
                )
-               
-               return JsonResponse({
-                   'success': True,
-                   'image_id': image.id,
-                   'url': image.get_url()
-               })
-           except Exception as e:
-               return JsonResponse({'error': str(e)}, status=500)
-       
+           except ImageNotFoundError:
+               return JsonResponse({'error': 'Image not found in Cloudflare'}, status=404)
+           except ImageNotReadyError:
+               return JsonResponse({'error': 'Upload not completed yet'}, status=409)
+
+           return JsonResponse({
+               'success': True,
+               'image_id': image.id,
+               'url': image.get_url()
+           })
+
        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+.. warning::
+
+   Do **not** call ``CloudflareImage.objects.get_or_create(cloudflare_id=...)``
+   directly with a client-supplied id. The id may not exist, may still be a
+   draft, or may belong to another user, and doing so leaves a bare local row
+   that does not correspond to a real Cloudflare image.
+   ``register_uploaded`` is the recommended path: it validates the id against
+   Cloudflare before persisting anything, and raises ``ImageNotFoundError``
+   (id does not exist) or ``ImageNotReadyError`` (exists but still a draft)
+   without creating a local row on failure.
 
 Using in Django Forms
 ---------------------

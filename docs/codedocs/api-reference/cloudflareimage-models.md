@@ -26,6 +26,41 @@ class ImageUploadStatus(models.TextChoices):
     EXPIRED = "expired"
 ```
 
+## `CloudflareImageManager`
+
+`CloudflareImage.objects` is a `CloudflareImageManager` that adds one helper on
+top of the default manager API:
+
+```python
+def register_uploaded(self, cloudflare_id: str, user=None) -> CloudflareImage: ...
+```
+
+This is the safe way to persist a client-supplied `cloudflare_id`. It delegates
+to `cloudflare_service.register_uploaded_image()`, which verifies the image
+against Cloudflare (it must exist and have its draft state cleared) before
+creating the local row, populating status, variants, metadata, and creator from
+the Cloudflare response. It raises `ImageNotFoundError` (missing) or
+`ImageNotReadyError` (still a draft) instead of trusting the input.
+
+> ⚠️ Do **not** call `CloudflareImage.objects.get_or_create(cloudflare_id=<client value>)`
+> directly: the ID may not exist, may still be a draft, or belong to another
+> user, and you would persist a bare, untrustworthy row. Use `register_uploaded`.
+
+```python
+from django_cloudflareimages_toolkit import (
+    CloudflareImage,
+    ImageNotFoundError,
+    ImageNotReadyError,
+)
+
+try:
+    image = CloudflareImage.objects.register_uploaded(cloudflare_id, user=request.user)
+except ImageNotFoundError:
+    ...  # not in Cloudflare
+except ImageNotReadyError:
+    ...  # exists but upload incomplete (still a draft)
+```
+
 ## `CloudflareImage`
 
 This model tracks one Cloudflare upload slot or uploaded image.
@@ -40,7 +75,8 @@ This model tracks one Cloudflare upload slot or uploaded image.
 | `upload_url` | `URLField` | — | One-time upload URL issued by Cloudflare. |
 | `status` | `CharField` | `pending` | Uses `ImageUploadStatus.choices`. |
 | `require_signed_urls` | `BooleanField` | `True` | Local signed-URL requirement flag. |
-| `metadata` | `JSONField` | `{}` | App metadata sent at upload creation time. |
+| `metadata` | `JSONField` | `{}` | Resolved app metadata sent at upload creation time (queryable via `metadata__...`). |
+| `creator` | `CharField(255)` | `""` | Cloudflare `creator` value; indexed and queryable. |
 | `expires_at` | `DateTimeField` | — | Upload URL expiry timestamp. |
 | `variants` | `JSONField` | `[]` | Variant URLs returned by Cloudflare. |
 | `cloudflare_metadata` | `JSONField` | `{}` | Metadata returned from Cloudflare payloads. |
@@ -75,6 +111,10 @@ def get_url(self, variant: str = "public") -> str | None: ...
 def get_signed_url(self, variant: str = "public", expiry: int = 3600) -> str | None: ...
 def update_from_cloudflare_response(self, response_data: dict[str, Any]) -> None: ...
 ```
+
+`update_from_cloudflare_response()` maps the Cloudflare payload onto the row:
+status/`uploaded_at`, `variants`, `cloudflare_metadata` (from `metadata` or, for
+GET-image payloads, `meta`), `creator`, `filename`, and `width`/`height`/`format`.
 
 `get_signed_url()` currently falls back to `get_url()` even when `require_signed_urls` is true, because real signing is marked as TODO in the source.
 

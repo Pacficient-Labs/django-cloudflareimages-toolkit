@@ -22,6 +22,7 @@ import responses
 from django.contrib.auth import get_user_model
 
 from django_cloudflareimages_toolkit.exceptions import (
+    CloudflareImagesError,
     ImageNotFoundError,
     ImageNotReadyError,
 )
@@ -160,6 +161,17 @@ class TestUploadDefaults:
         # The request hit the v2 multipart direct_upload endpoint.
         assert responses.calls[-1].request.url == DIRECT_UPLOAD_URL
 
+    @responses.activate
+    def test_non_dict_metadata_raises_typed_error_not_500(self, user):
+        """A non-dict metadata is rejected before the spread-merge (no TypeError)."""
+        _mock_direct_upload()
+        with pytest.raises(CloudflareImagesError):
+            cloudflare_service.create_direct_upload_url(
+                user=user, metadata=["not", "a", "dict"]
+            )
+        # No request was made to Cloudflare.
+        assert len(responses.calls) == 0
+
 
 # ---------------------------------------------------------------------------
 # FIX 3 - pluggable metadata factory
@@ -289,10 +301,13 @@ class TestRegisterUploaded:
         assert image.filename == "photo.jpg"
         assert image.creator == "creator-99"
         assert image.cloudflare_metadata == {"origin": "mobile"}
+        # CF "meta" is mirrored into the queryable metadata field.
+        assert image.metadata == {"origin": "mobile"}
         assert len(image.variants) == 2
         assert image.public_url.endswith("/public")
-        # Persisted and queryable.
+        # Persisted and queryable, including by the mirrored metadata.
         assert CloudflareImage.objects.filter(cloudflare_id=cid).count() == 1
+        assert CloudflareImage.objects.filter(metadata__origin="mobile").exists()
 
     @responses.activate
     def test_missing_image_raises_not_found_and_creates_no_row(self, user):

@@ -10,6 +10,6 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="cloudflareimage",
             name="creator",
-            field=models.CharField(blank=True, db_index=True, max_length=1024),
+            field=models.CharField(blank=True, db_index=True, max_length=255),
         ),
     ]

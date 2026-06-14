@@ -3,7 +3,7 @@ title: "Architecture"
 description: "Understand the internal module layout, data flow, and design decisions behind django-cloudflareimages-toolkit."
 ---
 
-The package is a Django app with one Django-independent island: `django_cloudflareimages_toolkit/transformations.py`. Everything else layers on top of Django settings, models, or DRF. The top-level package file, `django_cloudflareimages_toolkit/__init__.py`, keeps those layers separate by eagerly exporting transformation helpers and lazily importing Django-dependent objects only when you access them.
+The package is a Django app with two Django-independent islands: `django_cloudflareimages_toolkit/transformations.py` and the `ImageMetadataFactory` base in `django_cloudflareimages_toolkit/metadata.py`. Everything else layers on top of Django settings, models, or DRF. The top-level package file, `django_cloudflareimages_toolkit/__init__.py`, keeps those layers separate by eagerly exporting transformation helpers and lazily importing Django-dependent objects only when you access them.
 
 ```mermaid
 graph TD
@@ -16,6 +16,7 @@ graph TD
   D --> H[settings.py]
   D --> C
   D --> I[requests.Session]
+  D --> P[metadata.py ImageMetadataFactory]
   J[views.py] --> K[serializers.py]
   J --> D
   J --> C
@@ -62,9 +63,13 @@ sequenceDiagram
   Service->>DB: update status, variants, metadata
 ```
 
-The lifecycle starts with a server-issued one-time upload URL. The service clamps `expiry_minutes` into the Cloudflare-supported `2..360` minute range, serializes `metadata` to JSON, and sends a multipart request because Cloudflare expects form fields rather than a JSON body. Once the response comes back, the package persists a `CloudflareImage` row immediately so there is something local to update later.
+The lifecycle starts with a server-issued one-time upload URL. The service resolves metadata and creator (see below), clamps `expiry_minutes` into the Cloudflare-supported `2..360` minute range, serializes `metadata` to JSON, and sends a multipart request because Cloudflare expects form fields rather than a JSON body. Once the response comes back, the package persists a `CloudflareImage` row immediately so there is something local to update later.
 
-Later synchronization can happen in two ways. `check_image_status` in `services.py` polls the Cloudflare `images/v1/{id}` endpoint and then calls `CloudflareImage.update_from_cloudflare_response`. The webhook path does the same update, but from push events received by `WebhookView`. Both flows also create `ImageUploadLog` rows so the admin surface can show a local event trail.
+Later synchronization can happen in three ways. `check_image_status` in `services.py` polls the Cloudflare `images/v1/{id}` endpoint and then calls `CloudflareImage.update_from_cloudflare_response`. The webhook path does the same update, but from push events received by `WebhookView`. The explicit `register_uploaded_image` path (reached through `CloudflareImage.objects.register_uploaded`) fetches the image with `get_image`, refuses anything missing (`ImageNotFoundError`) or still in draft (`ImageNotReadyError`), then `get_or_create`s the local row and applies the same update. All three flows also create `ImageUploadLog` rows so the admin surface can show a local event trail.
+
+### Metadata factory extension point
+
+Metadata resolution is an explicit extension point. The service reads `DEFAULT_METADATA`, `DEFAULT_CREATOR`, and `METADATA_FACTORY` from the `cloudflare_settings` singleton. It merges `DEFAULT_METADATA` under the per-request `metadata` (per-request keys win), then, if `METADATA_FACTORY` is configured, resolves it via Django's `import_string` and calls it with the merged metadata plus context (`user`, `custom_id`, `creator`). The factory's return value has the final say. The base `ImageMetadataFactory` in `django_cloudflareimages_toolkit/metadata.py` is a callable class whose `get_metadata` you override; it stays Django-independent so it can be unit-tested in isolation. The resolved metadata and creator are sent to Cloudflare and stored on the `CloudflareImage` row.
 
 ## Key Design Decisions
 

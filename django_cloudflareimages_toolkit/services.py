@@ -126,6 +126,12 @@ class CloudflareImagesService:
         if expiry_minutes is None:
             expiry_minutes = cloudflare_settings.default_expiry_minutes
 
+        # Guard against non-dict metadata (e.g. a JSON array from a direct
+        # caller) before the spread-merge below, which would otherwise raise a
+        # bare TypeError. The view maps CloudflareImagesError to a 400.
+        if metadata is not None and not isinstance(metadata, dict):
+            raise CloudflareImagesError("metadata must be a dict")
+
         # Merge per-request metadata on top of the configured defaults so that
         # per-request keys take precedence over DEFAULT_METADATA.
         metadata = {**cloudflare_settings.default_metadata, **(metadata or {})}
@@ -401,6 +407,11 @@ class CloudflareImagesService:
                 f"Image {cloudflare_id} is still a draft (upload not completed)"
             )
 
+        # Cloudflare returns upload metadata under "meta" (older payloads use
+        # "metadata"). For a registered-by-id image this is the only metadata we
+        # have, so mirror it into the queryable ``metadata`` field too.
+        cf_meta = result.get("meta") or result.get("metadata") or {}
+
         image, created = CloudflareImage.objects.get_or_create(
             cloudflare_id=cloudflare_id,
             defaults={
@@ -410,6 +421,7 @@ class CloudflareImagesService:
                 "require_signed_urls": result.get(
                     "requireSignedURLs", cloudflare_settings.require_signed_urls
                 ),
+                "metadata": cf_meta,
                 # The upload URL has already been consumed; record "now" so the
                 # required expires_at field is populated for registered images.
                 "expires_at": timezone.now(),
@@ -419,9 +431,13 @@ class CloudflareImagesService:
         # Associate the user on pre-existing rows that don't have one yet.
         if user is not None and image.user_id is None:
             image.user = user
-            image.save(update_fields=["user"])
 
-        # Populate status, variants, metadata, creator and filename from CF.
+        # Backfill the queryable metadata field on a pre-existing row when CF
+        # has metadata for it (don't clobber existing values with an empty dict).
+        if not created and cf_meta:
+            image.metadata = cf_meta
+
+        # Populate status, variants, cloudflare_metadata, creator and filename.
         image.update_from_cloudflare_response(result)
 
         ImageUploadLog.objects.create(

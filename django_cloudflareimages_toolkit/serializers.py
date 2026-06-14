@@ -37,10 +37,21 @@ class ImageUploadRequestSerializer(serializers.Serializer):
         max_length=255, required=False, help_text="Original filename for reference"
     )
     creator = serializers.CharField(
-        max_length=1024,
+        max_length=255,
         required=False,
         help_text="Cloudflare creator value to associate with the image",
     )
+
+    def validate_metadata(self, value):
+        """Reject non-object metadata so it can't break the defaults merge.
+
+        DRF's JSONField accepts any JSON type; a list/string would later raise
+        TypeError in the ``{**defaults, **metadata}`` merge and surface as a 500
+        instead of a clean 400.
+        """
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("metadata must be a JSON object.")
+        return value
 
     def validate_custom_id(self, value: str) -> str:
         """Validate custom ID format."""

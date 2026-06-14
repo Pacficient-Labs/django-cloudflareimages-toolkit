@@ -65,6 +65,7 @@ def get_direct_upload_url(
     metadata: dict[str, Any] | None = None,
     require_signed_urls: bool | None = None,
     expiry_minutes: int | None = None,
+    creator: str | None = None,
 ) -> dict[str, str]: ...
 ```
 
@@ -80,6 +81,7 @@ def create_direct_upload_url(
     metadata: dict[str, Any] | None = None,
     require_signed_urls: bool | None = None,
     expiry_minutes: int | None = None,
+    creator: str | None = None,
 ) -> CloudflareImage: ...
 ```
 
@@ -87,9 +89,15 @@ def create_direct_upload_url(
 |-----------|------|---------|-------------|
 | `user` | Django model instance \| `None` | `None` | Owner for the created `CloudflareImage` row. |
 | `custom_id` | `str \| None` | `None` | Explicit Cloudflare image ID to request. |
-| `metadata` | `dict[str, Any] \| None` | `None` | Metadata serialized into the Cloudflare request and stored locally. |
+| `metadata` | `dict[str, Any] \| None` | settings default | Merged on top of `DEFAULT_METADATA` (per-request keys win), then passed through `METADATA_FACTORY` if configured. Stored locally and sent to Cloudflare. Must be a dict. |
 | `require_signed_urls` | `bool \| None` | settings default | Overrides `CLOUDFLARE_IMAGES["REQUIRE_SIGNED_URLS"]`. |
 | `expiry_minutes` | `int \| None` | settings default | Clamped to `2..360` minutes before the request is sent. |
+| `creator` | `str \| None` | `DEFAULT_CREATOR` | Cloudflare `creator` value; sent in the multipart request and stored on `CloudflareImage.creator`. |
+
+Defaults are resolved for any argument left as `None`. The metadata precedence,
+lowest to highest, is `DEFAULT_METADATA` < per-request `metadata` <
+`METADATA_FACTORY` output. A non-dict `metadata` raises `CloudflareImagesError`
+before the request is made.
 
 Example:
 
@@ -97,6 +105,7 @@ Example:
 image = cloudflare_service.create_direct_upload_url(
     user=request.user,
     metadata={"kind": "avatar"},
+    creator=str(request.user.pk),
     expiry_minutes=20,
 )
 ```
@@ -120,6 +129,29 @@ def list_images(self, page: int = 1, per_page: int = 1000) -> dict[str, Any]: ..
 ```python
 def get_image(self, image_id: str) -> dict[str, Any]: ...
 ```
+
+Raises `ImageNotFoundError` when Cloudflare responds with a 404 (other request
+failures raise `CloudflareImagesError`).
+
+### `register_uploaded_image`
+
+```python
+def register_uploaded_image(
+    self, cloudflare_id: str, user=None
+) -> CloudflareImage: ...
+```
+
+Safely registers a client-supplied `cloudflare_id`. It fetches the image from
+Cloudflare, confirms it exists and that its draft state is cleared, then
+`get_or_create`s the local row (status `uploaded`) and populates status,
+variants, metadata (Cloudflare's `meta` is mirrored into both `metadata` and
+`cloudflare_metadata`), creator, and filename via
+`update_from_cloudflare_response()`. Writes an `image_registered`
+`ImageUploadLog`. Raises `ImageNotFoundError` if the image is missing or
+`ImageNotReadyError` if it is still a draft (no local row is created on either).
+This method backs the `CloudflareImage.objects.register_uploaded()` manager
+helper and is the recommended alternative to a raw
+`get_or_create(cloudflare_id=...)`.
 
 ### `update_image`
 
@@ -160,7 +192,7 @@ Looks up the local row by `payload["id"]`, applies `update_from_cloudflare_respo
 
 ## Error Behavior
 
-Remote request failures raise `CloudflareImagesError`. HTTP success with a Cloudflare response that sets `"success": false` also raises `CloudflareImagesError` with the concatenated Cloudflare error messages.
+Remote request failures raise `CloudflareImagesError`. HTTP success with a Cloudflare response that sets `"success": false` also raises `CloudflareImagesError` with the concatenated Cloudflare error messages. Two cases are typed subclasses of `CloudflareImagesError`: a Cloudflare 404 from `get_image`/`register_uploaded_image` raises `ImageNotFoundError`, and a still-draft image in `register_uploaded_image` raises `ImageNotReadyError`.
 
 ## Common Pattern
 

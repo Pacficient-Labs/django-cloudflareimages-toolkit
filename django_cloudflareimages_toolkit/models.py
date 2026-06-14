@@ -90,8 +90,10 @@ class CloudflareImage(models.Model):
     require_signed_urls = models.BooleanField(default=True)
     metadata = models.JSONField(default=dict, blank=True)
     # Cloudflare "creator" field: associates the image with a creator/user.
-    # Indexed so records can be queried by creator from Django.
-    creator = models.CharField(max_length=1024, blank=True, db_index=True)
+    # Indexed so records can be queried by creator from Django. Capped at 255 so
+    # the index stays within InnoDB's key-length limit under MySQL/utf8mb4
+    # (a 1024-char utf8mb4 column needs 4096 bytes, over the 3072-byte cap).
+    creator = models.CharField(max_length=255, blank=True, db_index=True)
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)

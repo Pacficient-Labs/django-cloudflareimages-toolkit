@@ -47,6 +47,9 @@ CLOUDFLARE_IMAGES = {
     'BASE_URL': 'https://api.cloudflare.com/client/v4',  # Optional
     'DEFAULT_EXPIRY_MINUTES': 30,  # Optional
     'REQUIRE_SIGNED_URLS': True,  # Optional
+    'DEFAULT_METADATA': {},  # Optional: merged under per-request metadata (per-request keys win)
+    'DEFAULT_CREATOR': None,  # Optional: default Cloudflare "creator" value
+    'METADATA_FACTORY': None,  # Optional: dotted path to an ImageMetadataFactory
     'WEBHOOK_SECRET': 'your-webhook-secret',  # Optional
     'MAX_FILE_SIZE_MB': 10,  # Optional
 }
@@ -89,13 +92,13 @@ python manage.py migrate
 ```python
 from django_cloudflareimages_toolkit.services import cloudflare_service
 
-# Create direct upload URL
+# Create direct upload URL (per-request args override CLOUDFLARE_IMAGES defaults)
 image = cloudflare_service.create_direct_upload_url(
     user=request.user,
     metadata={'type': 'avatar', 'user_id': '123'},
+    creator='user-123',
     require_signed_urls=True,
     expiry_minutes=60,
-    filename='avatar.jpg'
 )
 
 print(f"Upload URL: {image.upload_url}")
@@ -253,7 +256,8 @@ The main service class that handles all Cloudflare Images API interactions.
 **Location**: `django_cloudflareimages_toolkit/services.py`
 
 **Key Methods**:
-- `create_direct_upload_url()`: Creates one-time upload URLs
+- `create_direct_upload_url()`: Creates one-time upload URLs (resolves metadata/creator defaults + factory)
+- `register_uploaded_image()`: Verifies a client-supplied ID against Cloudflare, then persists it
 - `check_image_status()`: Checks and updates image status from Cloudflare
 - `get_upload_statistics()`: Retrieves upload statistics
 - `validate_webhook_signature()`: Validates webhook HMAC signatures
@@ -718,27 +722,46 @@ def migrate_image_from_url(image_url, user=None, metadata=None):
 ```python
 def create_direct_upload_url(
     user: Optional[User] = None,
+    custom_id: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     require_signed_urls: Optional[bool] = None,
     expiry_minutes: Optional[int] = None,
-    filename: Optional[str] = None
+    creator: Optional[str] = None
 ) -> CloudflareImage
 ```
 
-Creates a one-time upload URL for direct image uploads.
+Creates a one-time upload URL for direct image uploads. Any argument left as
+`None` falls back to its `CLOUDFLARE_IMAGES` settings default.
 
 **Parameters**:
 - `user`: Django User instance (optional)
-- `metadata`: Custom metadata dictionary
-- `require_signed_urls`: Whether to require signed URLs
-- `expiry_minutes`: Upload URL expiration time
-- `filename`: Original filename
+- `custom_id`: Explicit Cloudflare image ID to request
+- `metadata`: Custom metadata (merged on top of `DEFAULT_METADATA`, then passed through `METADATA_FACTORY` if configured; must be a dict)
+- `require_signed_urls`: Whether to require signed URLs (default `REQUIRE_SIGNED_URLS`)
+- `expiry_minutes`: Upload URL expiration time (default `DEFAULT_EXPIRY_MINUTES`)
+- `creator`: Cloudflare "creator" value (default `DEFAULT_CREATOR`); sent to Cloudflare and stored on `CloudflareImage.creator`
+
+Metadata precedence (low to high): `DEFAULT_METADATA` < per-request `metadata` < `METADATA_FACTORY` output.
 
 **Returns**: CloudflareImage instance with upload_url
 
 **Raises**:
-- `CloudflareAPIError`: API request failed
-- `ValidationError`: Invalid parameters
+- `CloudflareImagesError`: API request failed or `metadata` was not a dict
+
+#### register_uploaded_image()
+```python
+def register_uploaded_image(cloudflare_id: str, user=None) -> CloudflareImage
+```
+
+Safely persists a client-supplied `cloudflare_id`: fetches the image from
+Cloudflare, confirms it exists and is no longer a draft, then creates/returns the
+local record populated with status, variants, metadata, and creator. Backs the
+`CloudflareImage.objects.register_uploaded()` manager helper. Prefer it over a
+raw `get_or_create(cloudflare_id=...)`, which trusts unverified input.
+
+**Raises**:
+- `ImageNotFoundError`: the image does not exist in Cloudflare
+- `ImageNotReadyError`: the image exists but is still a draft
 
 #### check_image_status()
 ```python
