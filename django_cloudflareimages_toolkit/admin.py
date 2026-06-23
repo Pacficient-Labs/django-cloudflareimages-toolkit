@@ -551,7 +551,10 @@ class CloudflareImageAdmin(admin.ModelAdmin):
 
         for image in queryset:
             try:
-                cloudflare_service.delete_image(image)
+                # missing_ok=True so an image already gone from Cloudflare (404)
+                # still has its local row removed — the action converges on
+                # "deleted" rather than re-erroring on every retry.
+                cloudflare_service.delete_image(image, missing_ok=True)
                 image.delete()
                 deleted_count += 1
             except CloudflareImagesError:

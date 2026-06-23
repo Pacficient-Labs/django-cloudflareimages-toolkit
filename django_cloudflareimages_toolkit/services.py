@@ -589,18 +589,33 @@ class CloudflareImagesService:
             logger.error(f"Failed to update image {image_id}: {str(e)}")
             raise CloudflareImagesError(f"Failed to update image: {str(e)}") from e
 
-    def delete_image(self, image: CloudflareImage) -> bool:
+    def delete_image(self, image: CloudflareImage, *, missing_ok: bool = False) -> bool:
         """
         Delete an image from Cloudflare Images.
 
+        A Cloudflare ``404`` (the image is already absent) is surfaced as the
+        typed :class:`ImageNotFoundError`, mirroring :meth:`get_image`. Because
+        ``ImageNotFoundError`` subclasses ``CloudflareImagesError``, existing
+        ``except CloudflareImagesError`` callers keep matching it.
+
         Args:
             image: CloudflareImage instance
+            missing_ok: When ``True``, a Cloudflare ``404`` (image already gone)
+                is treated as a *successful* delete and returns ``True`` instead
+                of raising. The desired end state for a delete is "not in
+                Cloudflare", so callers whose job is to converge on that state
+                (orphan cleanup, the admin delete action, the viewset delete)
+                pass ``missing_ok=True`` and remain idempotent across repeated
+                or partially-failed runs.
 
         Returns:
-            True if deletion was successful
+            True if deletion was successful (or the image was already absent and
+            ``missing_ok`` is set).
 
         Raises:
-            CloudflareImagesError: If the API request fails
+            ImageNotFoundError: Cloudflare returned 404 and ``missing_ok`` is
+                False.
+            CloudflareImagesError: For any other API/transport failure.
         """
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image.cloudflare_id}"
 
@@ -631,6 +646,23 @@ class CloudflareImagesService:
             return True
 
         except requests.RequestException as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            if status_code == 404:
+                # The image is already gone in Cloudflare. For an idempotent
+                # caller that is the desired end state, so report success and
+                # let it remove the local row; otherwise surface the typed
+                # not-found error (still a CloudflareImagesError subclass).
+                if missing_ok:
+                    logger.info(
+                        f"Image {image.cloudflare_id} already absent in Cloudflare; "
+                        "treating delete as successful"
+                    )
+                    return True
+                logger.warning(f"Image {image.cloudflare_id} not found in Cloudflare")
+                raise ImageNotFoundError(
+                    f"Image {image.cloudflare_id} not found in Cloudflare",
+                    status_code=404,
+                ) from e
             logger.error(f"Failed to delete image {image.cloudflare_id}: {str(e)}")
             raise CloudflareImagesError(f"Failed to delete image: {str(e)}") from e
 
