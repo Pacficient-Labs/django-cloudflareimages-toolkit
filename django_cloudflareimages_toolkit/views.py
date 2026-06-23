@@ -8,21 +8,25 @@ transformations, and management operations.
 import json
 import logging
 
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse
+from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import permissions, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.viewsets import ModelViewSet
+from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 
 from .exceptions import CloudflareImagesError
-from .models import CloudflareImage, ImageUploadStatus
+from .models import CloudflareImage, ImageUploadStatus, ImageUsage
 from .serializers import (
+    BulkImageDeleteSerializer,
     BulkImageStatusSerializer,
     CloudflareImageSerializer,
     ImageFilterSerializer,
@@ -30,12 +34,18 @@ from .serializers import (
     ImageUploadLogSerializer,
     ImageUploadRequestSerializer,
     ImageUploadResponseSerializer,
+    ImageUsageSerializer,
     WebhookPayloadSerializer,
 )
 from .services import cloudflare_service
 from .settings import cloudflare_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _truthy(value) -> bool:
+    """Interpret a query-param string as a boolean."""
+    return str(value).lower() in ("1", "true", "yes", "on")
 
 
 class ImagePagination(PageNumberPagination):
@@ -52,37 +62,89 @@ class CloudflareImageViewSet(ModelViewSet):
     serializer_class = CloudflareImageSerializer
     pagination_class = ImagePagination
     permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["cloudflare_id", "filename", "original_filename", "creator"]
+    ordering_fields = ["created_at", "uploaded_at", "expires_at", "file_size"]
+    ordering = ["-created_at"]
 
     def get_queryset(self):
-        """Get queryset filtered by user and optional filters."""
+        """Get queryset filtered by user and optional query-param filters.
+
+        Each filter is applied only when its parameter is actually present in the
+        request. Boolean serializer fields can otherwise surface in
+        ``validated_data`` as ``False`` even when omitted, which would silently
+        filter the whole list.
+        """
+        params = self.request.query_params
         queryset = CloudflareImage.objects.filter(user=self.request.user)
 
-        # Apply filters from query parameters
-        filter_serializer = ImageFilterSerializer(data=self.request.query_params)
-        if filter_serializer.is_valid():
-            filters = filter_serializer.validated_data
+        filter_serializer = ImageFilterSerializer(data=params)
+        filter_serializer.is_valid()
+        filters = filter_serializer.validated_data
 
-            if filters and "status" in filters:
-                queryset = queryset.filter(status=filters["status"])
+        def provided(name):
+            return name in params and name in filters
 
-            if filters and "uploaded_after" in filters:
-                queryset = queryset.filter(uploaded_at__gte=filters["uploaded_after"])
+        if provided("status"):
+            queryset = queryset.filter(status=filters["status"])
+        if provided("uploaded_after"):
+            queryset = queryset.filter(uploaded_at__gte=filters["uploaded_after"])
+        if provided("uploaded_before"):
+            queryset = queryset.filter(uploaded_at__lte=filters["uploaded_before"])
+        if provided("has_variants"):
+            if filters["has_variants"]:
+                queryset = queryset.exclude(variants=[])
+            else:
+                queryset = queryset.filter(variants=[])
+        if provided("require_signed_urls"):
+            queryset = queryset.filter(
+                require_signed_urls=filters["require_signed_urls"]
+            )
+        if provided("filename"):
+            term = filters["filename"]
+            queryset = queryset.filter(
+                Q(filename__icontains=term) | Q(original_filename__icontains=term)
+            )
+        if provided("creator"):
+            queryset = queryset.filter(creator=filters["creator"])
+        if "orphaned" in params and filters.get("orphaned"):
+            queryset = queryset.filter(usages__isnull=True)
 
-            if filters and "uploaded_before" in filters:
-                queryset = queryset.filter(uploaded_at__lte=filters["uploaded_before"])
+        # Dynamic metadata lookups: ?metadata__<key>=<value>
+        for param, value in params.items():
+            if param.startswith("metadata__"):
+                queryset = queryset.filter(**{param: value})
 
-            if filters and "has_variants" in filters:
-                if filters["has_variants"]:
-                    queryset = queryset.exclude(variants=[])
-                else:
-                    queryset = queryset.filter(variants=[])
+        return queryset.distinct()
 
-            if filters and "require_signed_urls" in filters:
-                queryset = queryset.filter(
-                    require_signed_urls=filters["require_signed_urls"]
-                )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="by-cloudflare-id/(?P<cloudflare_id>[^/]+)",
+    )
+    def by_cloudflare_id(self, request: Request, cloudflare_id: str = None) -> Response:
+        """Look up an image by its Cloudflare ID (instead of the internal UUID)."""
+        image = get_object_or_404(self.get_queryset(), cloudflare_id=cloudflare_id)
+        serializer = self.get_serializer(image)
+        return Response(serializer.data)
 
-        return queryset.order_by("-created_at")
+    @action(detail=False, methods=["get"])
+    def orphans(self, request: Request) -> Response:
+        """List images referenced by no content (candidates for cleanup)."""
+        queryset = self.filter_queryset(self.get_queryset().filter(usages__isnull=True))
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["get"])
+    def usages(self, request: Request, pk=None) -> Response:
+        """List the content references for a single image."""
+        image = self.get_object()
+        serializer = ImageUsageSerializer(image.usages.all(), many=True)
+        return Response(serializer.data)
 
     @action(detail=True, methods=["post"])
     def check_status(self, request: Request, pk=None) -> Response:
@@ -110,18 +172,109 @@ class CloudflareImageViewSet(ModelViewSet):
         except CloudflareImagesError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=True, methods=["delete"])
-    def delete_from_cloudflare(self, request: Request, pk=None) -> Response:
-        """Delete image from Cloudflare and local database."""
+    def _delete_image(self, image, force: bool = False):
+        """Delete one image from Cloudflare + DB, respecting usage references.
+
+        Returns ``(deleted: bool, detail: dict)``. When the image is still
+        referenced by content and ``force`` is False, nothing is deleted and the
+        detail reports ``status="in_use"``.
+        """
+        usage_count = image.usages.count()
+        if usage_count and not force:
+            return False, {
+                "id": str(image.id),
+                "cloudflare_id": image.cloudflare_id,
+                "status": "in_use",
+                "usage_count": usage_count,
+            }
+
+        cloudflare_service.delete_image(image)
+        detail = {
+            "id": str(image.id),
+            "cloudflare_id": image.cloudflare_id,
+            "status": "deleted",
+        }
+        image.delete()
+        return True, detail
+
+    def destroy(self, request: Request, *args, **kwargs) -> Response:
+        """Delete from Cloudflare and DB; refuse if referenced (unless ?force)."""
         image = self.get_object()
+        force = _truthy(request.query_params.get("force", ""))
 
         try:
-            cloudflare_service.delete_image(image)
-            image.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
+            deleted, _ = self._delete_image(image, force=force)
         except CloudflareImagesError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not deleted:
+            return Response(
+                {
+                    "error": "Image is still referenced by content.",
+                    "usages": ImageUsageSerializer(image.usages.all(), many=True).data,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["delete"])
+    def delete_from_cloudflare(self, request: Request, pk=None) -> Response:
+        """Alias for DELETE: remove from Cloudflare and local DB (usage-aware)."""
+        return self.destroy(request)
+
+    @action(detail=False, methods=["post"])
+    def bulk_delete(self, request: Request) -> Response:
+        """Delete multiple images (usage-aware) by id and/or cloudflare_id."""
+        serializer = BulkImageDeleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ids = serializer.validated_data["ids"]
+        cloudflare_ids = serializer.validated_data["cloudflare_ids"]
+        force = serializer.validated_data["force"]
+
+        queryset = self.get_queryset()
+        results = []
+        seen_pks = set()
+
+        def process(image):
+            if image.pk in seen_pks:
+                return
+            seen_pks.add(image.pk)
+            try:
+                _, detail = self._delete_image(image, force=force)
+            except CloudflareImagesError as e:
+                detail = {
+                    "id": str(image.id),
+                    "cloudflare_id": image.cloudflare_id,
+                    "status": "error",
+                    "error": str(e),
+                }
+            results.append(detail)
+
+        by_id = {str(i.id): i for i in queryset.filter(id__in=ids)} if ids else {}
+        by_cf = (
+            {
+                i.cloudflare_id: i
+                for i in queryset.filter(cloudflare_id__in=cloudflare_ids)
+            }
+            if cloudflare_ids
+            else {}
+        )
+
+        for requested_id in ids:
+            image = by_id.get(str(requested_id))
+            if image is None:
+                results.append({"id": str(requested_id), "status": "not_found"})
+            else:
+                process(image)
+
+        for cf in cloudflare_ids:
+            image = by_cf.get(cf)
+            if image is None:
+                results.append({"cloudflare_id": cf, "status": "not_found"})
+            else:
+                process(image)
+
+        return Response({"results": results})
 
     @action(detail=True, methods=["get"])
     def logs(self, request: Request, pk=None) -> Response:
@@ -167,6 +320,49 @@ class CloudflareImageViewSet(ModelViewSet):
                 )
 
         return Response({"results": results})
+
+
+class ImageUsageViewSet(ReadOnlyModelViewSet):
+    """Read-only ViewSet for browsing image usage references.
+
+    Scoped to the requesting user's images. Staff additionally see usages that
+    point at unregistered images (those have no owner). Query params:
+    ``content_type`` (``app_label.model``), ``field_name``, ``unregistered``.
+    """
+
+    serializer_class = ImageUsageSerializer
+    pagination_class = ImagePagination
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["cloudflare_id", "field_name", "object_id"]
+    ordering_fields = ["created_at", "updated_at"]
+    ordering = ["-updated_at"]
+
+    def get_queryset(self):
+        """User-scoped usages, with optional content_type/field/unregistered filters."""
+        user = self.request.user
+        queryset = ImageUsage.objects.select_related("content_type", "image")
+        if not user.is_staff:
+            # Scope to the user's own images. Unregistered usages (image is null)
+            # have no owner, so they are intentionally visible to staff only — a
+            # non-staff `?unregistered=true` request therefore returns nothing.
+            queryset = queryset.filter(image__user=user)
+
+        content_type = self.request.query_params.get("content_type")
+        if content_type and "." in content_type:
+            app_label, model = content_type.split(".", 1)
+            queryset = queryset.filter(
+                content_type__app_label=app_label, content_type__model=model
+            )
+
+        field_name = self.request.query_params.get("field_name")
+        if field_name:
+            queryset = queryset.filter(field_name=field_name)
+
+        if _truthy(self.request.query_params.get("unregistered", "")):
+            queryset = queryset.filter(image__isnull=True)
+
+        return queryset
 
 
 class CreateUploadURLView(APIView):
@@ -305,6 +501,8 @@ class ImageStatsView(APIView):
             "images_with_signed_urls": queryset.filter(
                 require_signed_urls=True
             ).count(),
+            "total_usages": ImageUsage.objects.filter(image__user=request.user).count(),
+            "orphaned_images": queryset.filter(usages__isnull=True).count(),
         }
 
         return Response(stats)

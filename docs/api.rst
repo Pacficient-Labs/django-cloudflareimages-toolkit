@@ -307,6 +307,55 @@ variants, metadata, and creator. No local row is created on failure.
    another user, and it leaves a bare local row. Use ``register_uploaded``
    instead.
 
+ImageUsage Model
+----------------
+
+.. autoclass:: django_cloudflareimages_toolkit.models.ImageUsage
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Reverse index recording which content references which Cloudflare image. It is a
+*derived* index maintained by signals and rebuildable with
+``reconcile_image_usage``. See :doc:`usage` for the full registry workflow.
+
+**Key fields:**
+
+* ``content_type`` / ``object_id`` / ``content_object``: the referencing model instance
+* ``field_name``: the field holding the reference (e.g. ``avatar``) or ``manual``
+* ``cloudflare_id``: the referenced Cloudflare image ID (source of truth)
+* ``image``: resolved ``CloudflareImage`` (``None`` marks an unregistered reference)
+
+**Reverse lookups:**
+
+.. code-block:: python
+
+   image.usages.all()                                    # what references this image
+   CloudflareImage.objects.filter(usages__isnull=True)   # orphaned (unused) images
+   ImageUsage.objects.filter(image__isnull=True)         # referenced but unregistered
+
+Image Usage Registry
+--------------------
+
+.. autofunction:: django_cloudflareimages_toolkit.registry.get_models_with_image_fields
+   :no-index:
+
+.. autofunction:: django_cloudflareimages_toolkit.registry.register_usage
+   :no-index:
+
+.. autofunction:: django_cloudflareimages_toolkit.registry.unregister_usage
+   :no-index:
+
+``register_usage`` / ``unregister_usage`` are also importable from the package
+root. Use them for references the toolkit cannot discover automatically:
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import register_usage, unregister_usage
+
+   register_usage(obj, "cloudflare-image-id")   # field_name="manual" by default
+   unregister_usage(obj)
+
 ImageMetadataFactory
 --------------------
 
@@ -487,9 +536,32 @@ Cleans up expired upload URLs and unused images.
 
    # Clean up images older than 7 days
    python manage.py cleanup_expired_images --days 7
-   
+
    # Dry run to see what would be deleted
    python manage.py cleanup_expired_images --dry-run
+
+   # Delete orphaned (unreferenced) images older than 30 days
+   python manage.py cleanup_expired_images --delete-orphans --orphan-days 30
+
+reconcile_image_usage Command
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: django_cloudflareimages_toolkit.management.commands.reconcile_image_usage.Command
+   :members:
+   :undoc-members:
+
+Rebuilds the image usage registry from host models — the fix for bulk operations
+that bypass the sync signals — and reports orphans and unregistered references.
+Idempotent and safe to schedule.
+
+**Options:**
+
+* ``--dry-run``: Report what would change without writing.
+
+.. code-block:: bash
+
+   python manage.py reconcile_image_usage
+   python manage.py reconcile_image_usage --dry-run
 
 App Configuration
 -----------------

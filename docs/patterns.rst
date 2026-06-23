@@ -602,3 +602,50 @@ You can combine signed URLs with transformations because Cloudflare
 Images applies transformations on the signed delivery URL before
 verifying the signature. Test in your environment that your signed-URL
 expiry matches the cache TTL you're handing to clients.
+
+SSOT & orphan auditing with the usage registry
+==============================================
+
+The image usage registry gives you a single source of truth for *which content
+references each image*, which makes two operational chores straightforward:
+auditing orphaned uploads and deleting images safely.
+
+Find and report orphans
+------------------------
+
+Orphans are uploaded images that no content references. Schedule a reconcile (to
+absorb any bulk changes that bypassed signals) and then inspect the registry:
+
+.. code-block:: python
+
+   from django.core.management import call_command
+   from django_cloudflareimages_toolkit.models import CloudflareImage, ImageUsage
+
+   call_command("reconcile_image_usage")
+
+   orphans = CloudflareImage.objects.filter(usages__isnull=True)
+   unregistered = ImageUsage.objects.filter(image__isnull=True)
+   print(orphans.count(), "orphaned images;", unregistered.count(), "unregistered refs")
+
+Delete safely (usage-aware)
+---------------------------
+
+Both the API and admin refuse to delete an image that is still referenced. Mirror
+that guard in your own code by checking ``usages`` before deleting, and prune only
+long-unused images:
+
+.. code-block:: python
+
+   def safe_delete(image, *, force=False):
+       if image.usages.exists() and not force:
+           raise ValueError("Image is still referenced by content")
+       from django_cloudflareimages_toolkit.services import cloudflare_service
+       cloudflare_service.delete_image(image)
+       image.delete()
+
+   # Or let the bundled command prune orphans older than N days:
+   call_command("cleanup_expired_images", delete_orphans=True, orphan_days=30)
+
+Because ``ImageUsage`` is rebuildable from your models, the registry can never
+drift permanently — re-running ``reconcile_image_usage`` always restores the
+correct state.

@@ -9,6 +9,8 @@ import uuid
 from typing import Any
 
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -311,3 +313,74 @@ class ImageUploadLog(models.Model):
 
     def __str__(self) -> str:
         return f"ImageUploadLog({self.image.cloudflare_id}) - {self.event_type}"
+
+
+class ImageUsage(models.Model):
+    """Reverse index: which content object references which Cloudflare image.
+
+    This is the missing half of the toolkit's source of truth. ``CloudflareImage``
+    records *what* has been uploaded; ``ImageUsage`` records *where each image is
+    used* — the model instance and field that point at a given ``cloudflare_id``.
+
+    It is a *derived* index, not an independent source of truth: it is maintained
+    automatically by signals on host models (see ``registry``/``signals``) and can
+    always be rebuilt from those models with the ``reconcile_image_usage``
+    management command.
+
+    Two reverse-lookup helpers fall out of the schema:
+
+    * orphaned images — ``CloudflareImage.objects.filter(usages__isnull=True)``
+      (uploaded but referenced by no content), and
+    * unregistered references — ``ImageUsage.objects.filter(image__isnull=True)``
+      (content points at an image the toolkit has no ``CloudflareImage`` row for).
+    """
+
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    # CharField so both integer and UUID primary keys are supported.
+    object_id = models.CharField(max_length=255, db_index=True)
+    content_object = GenericForeignKey("content_type", "object_id")
+
+    # The host field that holds the reference ("avatar", "image", ...), or
+    # "manual" for references recorded through the public registry API.
+    field_name = models.CharField(max_length=255)
+    # Source of truth for the reference itself (mirrors the value on the host
+    # field). Retained even when no CloudflareImage row exists yet.
+    cloudflare_id = models.CharField(max_length=255, db_index=True)
+    # Resolved CloudflareImage when one exists; null marks an unregistered
+    # reference. SET_NULL keeps the usage row (and its cloudflare_id) if the
+    # image record is later deleted.
+    image = models.ForeignKey(
+        CloudflareImage,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="usages",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "cloudflare_image_usages"
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["content_type", "object_id", "field_name"],
+                name="uniq_image_usage_per_field",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["content_type", "object_id"]),
+            models.Index(fields=["cloudflare_id"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"ImageUsage({self.cloudflare_id} -> "
+            f"{self.content_type}:{self.object_id}.{self.field_name})"
+        )
+
+    @property
+    def is_unregistered(self) -> bool:
+        """True when the referenced image has no CloudflareImage record."""
+        return self.image_id is None

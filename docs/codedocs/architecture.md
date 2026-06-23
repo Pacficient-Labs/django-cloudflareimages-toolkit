@@ -89,6 +89,16 @@ The service keeps `requests.Session` inside `threading.local()` rather than on t
 
 The package does not treat Cloudflare as the only source of truth. `CloudflareImage` stores status, expiry, dimensions, variants, and arbitrary metadata locally, and `ImageUploadLog` stores lifecycle events. That makes user-scoped listings, admin inspection, and cleanup possible without depending on Cloudflare for every page load.
 
+### Derived usage index, rebuildable from models
+
+`ImageUsage` records the reverse link — which content references each image — but
+is treated as a *derived* index, not an independent source of truth. `registry.py`
+discovers every `CloudflareImageField` and `signals.py` keeps the index in step on
+save/delete; the host field's stored `cloudflare_id` remains the truth for a
+reference. Because the index can always be rebuilt from the models with
+`reconcile_image_usage`, the two can never permanently diverge. See the
+[Image Usage Registry](./image-usage-registry).
+
 ### Thin wrappers over transformation URLs
 
 The transformation layer deliberately stays string-based. `CloudflareImageTransform` only validates and assembles options; it does not make API calls. That keeps it usable in scripts, templates, and even pre-Django contexts. The predefined helpers in `CloudflareImageVariants` are just convenience compositions of the builder, not a separate configuration system.

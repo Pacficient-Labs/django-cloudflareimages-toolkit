@@ -83,7 +83,17 @@ from django.core.management import call_command
 
 def nightly_image_maintenance() -> None:
     call_command("cleanup_expired_images")
-    call_command("cleanup_expired_images" delete=True days=30)
+    call_command("cleanup_expired_images", delete=True, days=30)
+    # Rebuild the usage registry, then prune long-unused (orphaned) images.
+    call_command("reconcile_image_usage")
+    call_command("cleanup_expired_images", delete_orphans=True, orphan_days=30)
 ```
+
+`reconcile_image_usage` rebuilds the [image usage registry](../image-usage-registry)
+from host models — necessary because bulk operations bypass the sync signals — and
+reports orphans and unregistered references. `cleanup_expired_images
+--delete-orphans` then removes images referenced by no content (older than
+`--orphan-days`) from Cloudflare and the database; run reconcile first so the
+orphan set is accurate.
 
 The request behavior is intentionally strict. Invalid JSON yields HTTP 400, payloads that fail serializer validation also yield HTTP 400, unknown image IDs yield HTTP 404, and unexpected processing failures yield HTTP 500. The tests in `tests/test_webhook_view.py` lock in those branches, so the guide matches the actual contract rather than older informal examples.

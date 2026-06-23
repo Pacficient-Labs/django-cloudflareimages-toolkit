@@ -216,11 +216,13 @@ The package includes Django admin integration for image management:
 .. code-block:: python
 
    # The admin interface provides:
-   # 1. View all uploaded images with thumbnails
-   # 2. Search and filter images by various criteria
-   # 3. View image metadata and variants
-   # 4. Delete images (removes from both Django and Cloudflare)
-   # 5. Generate new upload URLs
+   # 1. A thumbnail gallery view of uploads (toggle to table) with status/orphan/usage badges
+   # 2. Search and filter images by various criteria (including an Orphaned filter)
+   # 3. A "Used by" panel showing which content references each image
+   # 4. View image metadata and variants
+   # 5. "Used by" panel + Orphaned filter so staff can see usage before deleting
+   #    (usage-aware delete protection is enforced on the REST API, not the admin)
+   # 6. Generate new upload URLs
 
 Custom Admin Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -243,6 +245,24 @@ You can customize the admin interface:
        list_display = ['filename', 'uploaded_at', 'file_size', 'status']
        list_filter = ['status', 'require_signed_urls', 'uploaded_at']
        search_fields = ['filename', 'cloudflare_id']
+
+Maintenance Commands
+--------------------
+
+Two management commands keep image data tidy:
+
+.. code-block:: bash
+
+   # Mark expired upload URLs; optionally delete old expired rows
+   python manage.py cleanup_expired_images --delete --days 30
+
+   # Delete orphaned (unreferenced) images from Cloudflare + DB
+   python manage.py cleanup_expired_images --delete-orphans --orphan-days 30
+
+   # Rebuild the usage registry from your models (run before orphan cleanup)
+   python manage.py reconcile_image_usage
+
+See :doc:`usage` and :doc:`api` for the full image usage registry workflow.
 
 Image Variants Configuration
 ----------------------------

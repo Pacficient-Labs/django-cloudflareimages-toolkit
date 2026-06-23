@@ -14,7 +14,7 @@ description: "Install django-cloudflareimages-toolkit, understand the problem it
 
 ## The Solution
 
-The package splits the problem into focused pieces: `CloudflareImagesService` issues and synchronizes upload URLs, `CloudflareImage` stores lifecycle state, `CloudflareImageTransform` builds delivery URLs, and the Django app exposes DRF routes, admin views, template tags, and a cleanup command around that core.
+The package splits the problem into focused pieces: `CloudflareImagesService` issues and synchronizes upload URLs, `CloudflareImage` stores lifecycle state, the [image usage registry](/docs/image-usage-registry) tracks which content references each image, `CloudflareImageTransform` builds delivery URLs, and the Django app exposes DRF routes, admin views (including a thumbnail gallery), template tags, and cleanup/reconcile commands around that core.
 
 ```python
 from django_cloudflareimages_toolkit.services import cloudflare_service
@@ -127,10 +127,12 @@ python manage.py migrate
 - A pluggable metadata pipeline in `django_cloudflareimages_toolkit/metadata.py` with `DEFAULT_METADATA`, `DEFAULT_CREATOR`, and a `METADATA_FACTORY` extension point that gets the final say on per-upload metadata.
 - Safe server-side confirmation of browser uploads via `CloudflareImage.objects.register_uploaded()`, which verifies the image with Cloudflare before persisting a local row.
 - Template tags and helper builders in `django_cloudflareimages_toolkit/templatetags/cloudflare_images.py` and `django_cloudflareimages_toolkit/transformations.py` for responsive delivery URLs.
+- An image usage registry in `django_cloudflareimages_toolkit/registry.py` that tracks which content references each image, detects orphans, and powers an admin thumbnail gallery.
 - Built-in DRF routes, webhook validation, Django admin integration, and an expired-upload cleanup command.
 
 <Cards>
   <Card title="Architecture" href="/docs/architecture">See how the service, models, views, and template tags fit together.</Card>
   <Card title="Core Concepts" href="/docs/direct-upload-lifecycle">Start with the direct upload lifecycle and the tracked image model.</Card>
+  <Card title="Image Usage Registry" href="/docs/image-usage-registry">Track which content uses each image, find orphans, and use the admin gallery.</Card>
   <Card title="API Reference" href="/docs/api-reference/cloudflareimagesservice">Jump to exact imports, signatures, settings, and route behavior.</Card>
 </Cards>

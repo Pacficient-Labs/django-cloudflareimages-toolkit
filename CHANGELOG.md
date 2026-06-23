@@ -22,6 +22,34 @@ Release notes are also published on
   single source of truth for building, recognizing, extracting from, and
   rewriting Cloudflare Images delivery URLs. Both are exported from the package
   root. See the new `docs/url_factory.rst` guide.
+- **Image Usage Registry (SSOT).** A new `ImageUsage` model and registry track
+  *which content references each image*, complementing `CloudflareImage` (what
+  has been uploaded). Every `CloudflareImageField` across installed apps is
+  auto-discovered, and usage rows are kept in sync via signals on save/delete.
+  Reverse lookups become trivial: `image.usages.all()`, orphaned images
+  (`CloudflareImage.objects.filter(usages__isnull=True)`), and unregistered
+  references (`ImageUsage.objects.filter(image__isnull=True)`).
+- **Manual registration API.** `register_usage(obj, cloudflare_id,
+  field_name="manual")` and `unregister_usage(obj, field_name="manual")` record
+  references the toolkit cannot discover automatically. Also exported:
+  `ImageUsage` and `get_models_with_image_fields`.
+- **Admin gallery + usage surfacing.** The `CloudflareImage` changelist gains a
+  thumbnail **gallery view** (toggle to table) with status/orphan/usage badges, a
+  "Used by" inline linking to referencing objects, an **Orphaned** filter, and
+  usage/orphan/unregistered counts on the stats dashboard. A new `ImageUsage`
+  admin adds an **Unregistered** filter.
+- **REST API additions.** Look up by Cloudflare ID
+  (`/images/by-cloudflare-id/{cloudflare_id}/`), list a single image's references
+  (`/images/{id}/usages/`), list orphans (`/images/orphans/`), browse all usages
+  (`/usages/`), plus search/filter params (`filename`, `creator`, `orphaned`,
+  `search`, `ordering`, `metadata__<key>`). Deletes are now **usage-aware**:
+  `DELETE /images/{id}/` returns HTTP 409 when the image is still referenced
+  unless `?force=true`, and a new `POST /images/bulk_delete/` removes many at once
+  (from Cloudflare and the database).
+- **Management commands.** New `reconcile_image_usage` rebuilds the registry from
+  host models (the fix for signal-bypassing bulk operations) and reports
+  orphans/unregistered references. `cleanup_expired_images` gains opt-in
+  `--delete-orphans` / `--orphan-days N` flags.
 
 ### Changed
 
@@ -33,6 +61,12 @@ Release notes are also published on
   recognize its URLs. Stored Cloudflare variants (always returned on
   `imagedelivery.net`) are rewritten to the configured domain on read, preserving
   any query string such as signed-URL parameters.
+
+### Fixed
+
+- `CloudflareImageViewSet` list filtering no longer applies the optional boolean
+  filters (`has_variants`, `require_signed_urls`) unless they are actually present
+  in the request, fixing spuriously empty results.
 
 ## [1.1.0] - 2026-06-14
 
