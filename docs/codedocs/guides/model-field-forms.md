@@ -5,6 +5,12 @@ description: "Attach Cloudflare IDs to your own models with CloudflareImageField
 
 This guide is for applications that want a Django-idiomatic field on their own models while still letting the package track full upload state in `CloudflareImage`. The field stores only the Cloudflare image ID in your model, then exposes a richer wrapper object at runtime.
 
+Declaring a `CloudflareImageField` also opts the model into the
+[image usage registry](../image-usage-registry): the field is auto-discovered and
+an `ImageUsage` row is maintained on every save/delete, so you can later ask which
+content references a given image. For references stored outside a
+`CloudflareImageField`, record them with `register_usage(obj, cloudflare_id)`.
+
 <Steps>
 <Step>
 ### Define your model

@@ -196,3 +196,8 @@ print(image.status, image.expires_at, image.variants)
 ```
 </Accordion>
 </Accordions>
+
+Once an image is attached to one of your models through a `CloudflareImageField`,
+saving that model records the reference in the
+[image usage registry](./image-usage-registry), so the image's "used by" set stays
+current alongside its upload state.

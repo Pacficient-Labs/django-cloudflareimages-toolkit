@@ -8,13 +8,97 @@ Cloudflare images, upload logs, and system statistics.
 import json
 
 from django.contrib import admin
-from django.urls import reverse
+from django.db.models import Count
+from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.utils.html import format_html, format_html_join
+from django.utils.safestring import mark_safe
 
 from .exceptions import CloudflareImagesError
-from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
+from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus, ImageUsage
 from .services import cloudflare_service
+
+# Canonical status -> colour map. Single source for the admin status badge and
+# the gallery template filter (see templatetags.cloudflare_images).
+STATUS_COLORS = {
+    ImageUploadStatus.PENDING: "#ffc107",  # Yellow
+    ImageUploadStatus.DRAFT: "#17a2b8",  # Blue
+    ImageUploadStatus.UPLOADED: "#28a745",  # Green
+    ImageUploadStatus.FAILED: "#dc3545",  # Red
+    ImageUploadStatus.EXPIRED: "#6c757d",  # Gray
+}
+DEFAULT_STATUS_COLOR = "#6c757d"
+
+
+def content_object_admin_link(usage):
+    """Render an admin change-link to the object that references an image."""
+    ct = usage.content_type
+    label = (
+        str(usage.content_object)
+        if usage.content_object is not None
+        else f"{ct.app_label}.{ct.model}:{usage.object_id}"
+    )
+    try:
+        url = reverse(f"admin:{ct.app_label}_{ct.model}_change", args=[usage.object_id])
+    except NoReverseMatch:
+        return label
+    return format_html('<a href="{}">{}</a>', url, label)
+
+
+class OrphanedImageFilter(admin.SimpleListFilter):
+    """Filter CloudflareImages by whether any content references them."""
+
+    title = "usage"
+    parameter_name = "orphaned"
+
+    def lookups(self, request, model_admin):
+        return (("1", "Orphaned (no usages)"), ("0", "Referenced"))
+
+    def queryset(self, request, queryset):
+        if self.value() == "1":
+            return queryset.filter(usages__isnull=True)
+        if self.value() == "0":
+            return queryset.filter(usages__isnull=False).distinct()
+        return queryset
+
+
+class UnregisteredUsageFilter(admin.SimpleListFilter):
+    """Filter ImageUsage rows by whether they resolve to a CloudflareImage."""
+
+    title = "registration"
+    parameter_name = "unregistered"
+
+    def lookups(self, request, model_admin):
+        return (("1", "Unregistered (no image record)"), ("0", "Registered"))
+
+    def queryset(self, request, queryset):
+        if self.value() == "1":
+            return queryset.filter(image__isnull=True)
+        if self.value() == "0":
+            return queryset.filter(image__isnull=False)
+        return queryset
+
+
+class ImageUsageInline(admin.TabularInline):
+    """Read-only inline showing which content references this image."""
+
+    model = ImageUsage
+    fk_name = "image"
+    extra = 0
+    can_delete = False
+    fields = ("content_type", "object_id", "field_name", "referenced_by", "updated_at")
+    readonly_fields = fields
+    ordering = ("-updated_at",)
+    verbose_name_plural = "Used by (content references)"
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def referenced_by(self, obj):
+        """Admin link to the referencing object."""
+        return content_object_admin_link(obj)
+
+    referenced_by.short_description = "Referenced by"
 
 
 class ImageUploadLogInline(admin.TabularInline):
@@ -43,12 +127,17 @@ class ImageUploadLogInline(admin.TabularInline):
 class CloudflareImageAdmin(admin.ModelAdmin):
     """Admin interface for CloudflareImage model."""
 
+    change_list_template = (
+        "admin/django_cloudflareimages_toolkit/cloudflareimage/change_list.html"
+    )
+
     list_display = (
         "cloudflare_id_display",
         "user_display",
         "status_display",
         "filename_display",
         "file_size_display",
+        "usage_count_display",
         "created_at",
         "expires_at",
         "is_expired_display",
@@ -58,6 +147,7 @@ class CloudflareImageAdmin(admin.ModelAdmin):
 
     list_filter = (
         "status",
+        OrphanedImageFilter,
         "require_signed_urls",
         "created_at",
         "uploaded_at",
@@ -126,7 +216,7 @@ class CloudflareImageAdmin(admin.ModelAdmin):
         "transformation_examples",
     )
 
-    inlines = [ImageUploadLogInline]
+    inlines = [ImageUsageInline, ImageUploadLogInline]
 
     actions = [
         "check_status_action",
@@ -139,13 +229,26 @@ class CloudflareImageAdmin(admin.ModelAdmin):
     date_hierarchy = "created_at"
 
     def get_queryset(self, request):
-        """Optimize queryset with select_related."""
+        """Optimize queryset and annotate the usage count for list/gallery."""
         return (
             super()
             .get_queryset(request)
             .select_related("user")
             .prefetch_related("logs")
+            .annotate(usage_count=Count("usages", distinct=True))
         )
+
+    def changelist_view(self, request, extra_context=None):
+        """Expose the gallery/table view mode and a clean querystring."""
+        extra_context = extra_context or {}
+        view = request.GET.get("view", "gallery")
+        extra_context["cfimg_view"] = "table" if view == "table" else "gallery"
+        params = request.GET.copy()
+        params.pop("view", None)
+        extra_context["cfimg_querystring"] = params.urlencode()
+        # Strip our custom param so the admin changelist doesn't reject it.
+        request.GET = params
+        return super().changelist_view(request, extra_context=extra_context)
 
     # Display methods
     def cloudflare_id_display(self, obj):
@@ -157,9 +260,11 @@ class CloudflareImageAdmin(admin.ModelAdmin):
                 "this.style.backgroundColor='#90EE90'; "
                 "setTimeout(() => this.style.backgroundColor='', 1000)\">{}</span>",
                 obj.cloudflare_id,
-                obj.cloudflare_id[:20] + "..."
-                if len(obj.cloudflare_id) > 20
-                else obj.cloudflare_id,
+                (
+                    obj.cloudflare_id[:20] + "..."
+                    if len(obj.cloudflare_id) > 20
+                    else obj.cloudflare_id
+                ),
             )
         return "-"
 
@@ -176,14 +281,7 @@ class CloudflareImageAdmin(admin.ModelAdmin):
 
     def status_display(self, obj):
         """Display status with color coding."""
-        colors = {
-            ImageUploadStatus.PENDING: "#ffc107",  # Yellow
-            ImageUploadStatus.DRAFT: "#17a2b8",  # Blue
-            ImageUploadStatus.UPLOADED: "#28a745",  # Green
-            ImageUploadStatus.FAILED: "#dc3545",  # Red
-            ImageUploadStatus.EXPIRED: "#6c757d",  # Gray
-        }
-        color = colors.get(obj.status, "#6c757d")
+        color = STATUS_COLORS.get(obj.status, DEFAULT_STATUS_COLOR)
         return format_html(
             '<span style="color: {}; font-weight: bold;">{}</span>',
             color,
@@ -191,6 +289,23 @@ class CloudflareImageAdmin(admin.ModelAdmin):
         )
 
     status_display.short_description = "Status"
+
+    def usage_count_display(self, obj):
+        """Show how many content objects reference this image (orphan if 0)."""
+        count = getattr(obj, "usage_count", None)
+        if count is None:
+            count = obj.usages.count()
+        if not count:
+            return mark_safe(
+                '<span style="color: #dc3545; font-weight: bold;">0 (orphaned)</span>'
+            )
+        url = (
+            reverse("admin:django_cloudflareimages_toolkit_imageusage_changelist")
+            + f"?image__id__exact={obj.pk}"
+        )
+        return format_html('<a href="{}">{}</a>', url, count)
+
+    usage_count_display.short_description = "Used by"
 
     def filename_display(self, obj):
         """Display filename with truncation."""
@@ -523,9 +638,11 @@ class ImageUploadLogAdmin(admin.ModelAdmin):
             return format_html(
                 '<a href="{}">{}</a>',
                 url,
-                obj.image.cloudflare_id[:20] + "..."
-                if len(obj.image.cloudflare_id) > 20
-                else obj.image.cloudflare_id,
+                (
+                    obj.image.cloudflare_id[:20] + "..."
+                    if len(obj.image.cloudflare_id) > 20
+                    else obj.image.cloudflare_id
+                ),
             )
         return "-"
 
@@ -565,6 +682,90 @@ class ImageUploadLogAdmin(admin.ModelAdmin):
     formatted_data.short_description = "Data"
 
 
+@admin.register(ImageUsage)
+class ImageUsageAdmin(admin.ModelAdmin):
+    """Admin interface for the image usage registry (image <-> content)."""
+
+    list_display = (
+        "cloudflare_id_display",
+        "image_link",
+        "content_type",
+        "referenced_by",
+        "field_name",
+        "registered_display",
+        "updated_at",
+    )
+
+    list_filter = (
+        UnregisteredUsageFilter,
+        "content_type",
+        "field_name",
+    )
+
+    search_fields = ("cloudflare_id", "object_id", "field_name")
+
+    readonly_fields = (
+        "content_type",
+        "object_id",
+        "referenced_by",
+        "field_name",
+        "cloudflare_id",
+        "image",
+        "registered_display",
+        "created_at",
+        "updated_at",
+    )
+
+    fields = readonly_fields
+    list_per_page = 50
+    date_hierarchy = "updated_at"
+    ordering = ("-updated_at",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def get_queryset(self, request):
+        """Optimize related lookups for the changelist."""
+        return (
+            super()
+            .get_queryset(request)
+            .select_related("content_type", "image", "image__user")
+        )
+
+    def cloudflare_id_display(self, obj):
+        """Truncated Cloudflare ID."""
+        cid = obj.cloudflare_id
+        return (cid[:20] + "...") if len(cid) > 20 else cid
+
+    cloudflare_id_display.short_description = "Cloudflare ID"
+
+    def image_link(self, obj):
+        """Link to the CloudflareImage record, or flag an unregistered reference."""
+        if obj.image_id is None:
+            return mark_safe('<span style="color: #dc3545;">unregistered</span>')
+        url = reverse(
+            "admin:django_cloudflareimages_toolkit_cloudflareimage_change",
+            args=[obj.image_id],
+        )
+        return format_html('<a href="{}">image</a>', url)
+
+    image_link.short_description = "Image"
+
+    def referenced_by(self, obj):
+        """Admin link to the referencing object."""
+        return content_object_admin_link(obj)
+
+    referenced_by.short_description = "Referenced by"
+
+    def registered_display(self, obj):
+        """Show whether the reference resolves to a CloudflareImage."""
+        if obj.is_unregistered:
+            return mark_safe('<span style="color: #dc3545;">❌ Unregistered</span>')
+        return mark_safe('<span style="color: #28a745;">✅ Registered</span>')
+
+    registered_display.short_description = "Registration"
+
+
 # Custom admin site configuration
 class CloudflareImagesAdminSite(admin.AdminSite):
     """Custom admin site for Cloudflare Images."""
@@ -589,6 +790,16 @@ class CloudflareImagesAdminSite(admin.AdminSite):
             expires_at__lt=timezone.now()
         ).count()
 
+        # Usage registry stats
+        from .registry import get_models_with_image_fields
+
+        tracked_fields = sum(
+            len(names) for names in get_models_with_image_fields().values()
+        )
+        total_usages = ImageUsage.objects.count()
+        orphaned_images = CloudflareImage.objects.filter(usages__isnull=True).count()
+        unregistered_references = ImageUsage.objects.filter(image__isnull=True).count()
+
         # Recent activity
         recent_uploads = CloudflareImage.objects.filter(
             uploaded_at__isnull=False
@@ -605,9 +816,15 @@ class CloudflareImagesAdminSite(admin.AdminSite):
                     "uploaded_images": uploaded_images,
                     "pending_images": pending_images,
                     "expired_images": expired_images,
-                    "upload_success_rate": (uploaded_images / total_images * 100)
-                    if total_images > 0
-                    else 0,
+                    "upload_success_rate": (
+                        (uploaded_images / total_images * 100)
+                        if total_images > 0
+                        else 0
+                    ),
+                    "tracked_fields": tracked_fields,
+                    "total_usages": total_usages,
+                    "orphaned_images": orphaned_images,
+                    "unregistered_references": unregistered_references,
                 },
                 "recent_uploads": recent_uploads,
                 "recent_logs": recent_logs,

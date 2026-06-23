@@ -22,6 +22,41 @@ The simplest way to use Cloudflare Images is with the ``CloudflareImageField``:
        description = models.TextField()
        image = CloudflareImageField()
 
+Tracking Image Usage
+--------------------
+
+Declaring a ``CloudflareImageField`` automatically opts the model into the image
+usage registry. Each such field is auto-discovered, and saving or deleting the
+model keeps an ``ImageUsage`` row in sync, so you can always answer "which content
+references this image?":
+
+.. code-block:: python
+
+   product = Product.objects.create(image="cloudflare-image-id")
+
+   product.image_obj = product.image           # value is just the Cloudflare ID
+   image = CloudflareImage.objects.get(cloudflare_id="cloudflare-image-id")
+   image.usages.all()                          # -> the product reference
+
+   # Reverse lookups for operations/auditing:
+   CloudflareImage.objects.filter(usages__isnull=True)   # orphaned (unused) images
+   ImageUsage.objects.filter(image__isnull=True)         # referenced but unregistered
+
+For references stored outside a ``CloudflareImageField`` (e.g. an ID kept in a
+``JSONField`` or derived at runtime), record them explicitly:
+
+.. code-block:: python
+
+   from django_cloudflareimages_toolkit import register_usage, unregister_usage
+
+   register_usage(obj, "cloudflare-image-id")   # field_name="manual" by default
+   unregister_usage(obj)
+
+Bulk operations (``QuerySet.update()``, ``bulk_create``, ``loaddata``) bypass the
+sync signals; run ``python manage.py reconcile_image_usage`` to rebuild the
+registry (it is idempotent). The admin exposes a thumbnail gallery, a "Used by"
+panel, and Orphaned/Unregistered filters built on this data.
+
 Direct Upload Service
 ---------------------
 

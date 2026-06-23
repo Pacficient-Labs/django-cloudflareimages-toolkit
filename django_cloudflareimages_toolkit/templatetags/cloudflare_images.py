@@ -17,6 +17,15 @@ from ..transformations import (
 register = template.Library()
 
 
+@register.filter
+def cfimg_status_color(status) -> str:
+    """Return the badge colour for an upload status (shared with the admin)."""
+    # Imported lazily so this template module stays importable without the admin.
+    from ..admin import DEFAULT_STATUS_COLOR, STATUS_COLORS
+
+    return STATUS_COLORS.get(status, DEFAULT_STATUS_COLOR)
+
+
 @register.simple_tag
 def cf_image_transform(image_url: str, **kwargs) -> str:
     """

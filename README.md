@@ -6,6 +6,7 @@ A comprehensive Django toolkit for Cloudflare Images with direct creator upload,
 
 - **Direct Creator Upload**: Secure image uploads without exposing API keys to clients
 - **Comprehensive Image Management**: Track upload status, metadata, and variants
+- **Image Usage Registry (SSOT)**: Automatically tracks *which content references each image*, surfaces orphans, and powers an admin thumbnail gallery
 - **Advanced Transformations**: Full support for Cloudflare Images transformations
 - **Template Tags**: Easy integration with Django templates
 - **RESTful API**: Complete API for image management
@@ -143,14 +144,43 @@ Response:
 }
 ```
 
-#### List Images
+#### List / Search Images
 ```bash
 GET /cloudflare-images/api/images/
+# Filter & search:
+GET /cloudflare-images/api/images/?status=uploaded&filename=avatar&creator=user-123
+GET /cloudflare-images/api/images/?orphaned=true        # only unreferenced images
+GET /cloudflare-images/api/images/?search=logo&ordering=-created_at
+GET /cloudflare-images/api/images/?metadata__type=avatar
+```
+
+#### Look Up an Image by Cloudflare ID
+```bash
+GET /cloudflare-images/api/images/by-cloudflare-id/{cloudflare_id}/
 ```
 
 #### Check Image Status
 ```bash
 POST /cloudflare-images/api/images/{id}/check_status/
+```
+
+#### Image Usage (which content references an image)
+```bash
+GET  /cloudflare-images/api/images/{id}/usages/   # references for one image
+GET  /cloudflare-images/api/images/orphans/       # images referenced by nothing
+GET  /cloudflare-images/api/usages/               # browse all usage records
+```
+
+#### Delete Images (usage-aware, removes from Cloudflare + DB)
+```bash
+# Refused with HTTP 409 if the image is still referenced by content...
+DELETE /cloudflare-images/api/images/{id}/
+# ...unless you force it:
+DELETE /cloudflare-images/api/images/{id}/?force=true
+
+# Bulk delete by internal id and/or Cloudflare id:
+POST /cloudflare-images/api/images/bulk_delete/
+{"ids": ["uuid-1"], "cloudflare_ids": ["cf-2"], "force": false}
 ```
 
 #### Get Image Statistics
@@ -386,6 +416,21 @@ python manage.py cleanup_expired_images
 
 # Delete old expired images (older than 7 days)
 python manage.py cleanup_expired_images --delete --days 7
+
+# Delete orphaned (unreferenced) images older than 30 days from Cloudflare + DB
+python manage.py cleanup_expired_images --delete-orphans --orphan-days 30
+```
+
+#### Reconcile the Image Usage Registry
+
+Signals keep usage tracking current for ordinary saves/deletes. Bulk operations
+(`QuerySet.update()`, `bulk_create`, `loaddata`) bypass signals, so run this to
+rebuild the registry and report orphans / unregistered references. It is
+idempotent and safe to schedule:
+
+```bash
+python manage.py reconcile_image_usage            # rebuild + report
+python manage.py reconcile_image_usage --dry-run  # report only, no writes
 ```
 
 ### Django Admin Interface
@@ -394,6 +439,8 @@ The module provides a comprehensive Django admin interface for monitoring and ma
 
 #### Features:
 - **Image List View**: View all images with status, thumbnails, and key information
+- **Gallery View**: A thumbnail-grid view of uploads (toggle to table) with status, orphan, and usage badges
+- **Used-by Panel**: See which content references each image, with links to the referencing objects
 - **Detailed Image View**: Complete image details with transformation examples
 - **Status Management**: Check status, refresh from Cloudflare, mark as expired
 - **Bulk Actions**: Perform operations on multiple images at once
@@ -521,6 +568,63 @@ Tracks events and changes for debugging:
 - `event_type`: Type of event (upload_url_created, status_checked, etc.)
 - `message`: Human-readable message
 - `data`: Additional event data
+
+### ImageUsage
+
+Reverse index mapping each image to the content that references it (see
+[Image Usage Registry](#image-usage-registry-ssot)):
+
+- `content_type` / `object_id` / `content_object`: the referencing model instance
+- `field_name`: the field that holds the reference (e.g. `avatar`, or `manual`)
+- `cloudflare_id`: the referenced Cloudflare image ID (source of truth)
+- `image`: resolved `CloudflareImage` (null = referenced but unregistered)
+
+## Image Usage Registry (SSOT)
+
+`CloudflareImage` answers *"what has been uploaded"*. The usage registry answers
+the other half — *"what content is using each image"* — so admins and site staff
+have a single source of truth for both.
+
+**Automatic tracking.** Every model field declared as a `CloudflareImageField` is
+auto-discovered. Saving, updating, or deleting such a model keeps an `ImageUsage`
+row in sync via signals — no extra code required.
+
+```python
+from django_cloudflareimages_toolkit.fields import CloudflareImageField
+
+class Product(models.Model):
+    image = CloudflareImageField(blank=True, null=True)
+
+product = Product.objects.create(image="cloudflare-image-id")
+# -> an ImageUsage row now links that image to this product
+```
+
+**Manual API.** For references the toolkit can't see (an ID kept in a JSON blob,
+derived at runtime, etc.):
+
+```python
+from django_cloudflareimages_toolkit import register_usage, unregister_usage
+
+register_usage(my_object, "cloudflare-image-id")     # field_name="manual" by default
+unregister_usage(my_object)
+```
+
+**Reverse lookups.**
+
+```python
+image.usages.all()                                          # what uses this image
+CloudflareImage.objects.filter(usages__isnull=True)         # orphans (unused)
+ImageUsage.objects.filter(image__isnull=True)               # referenced but unregistered
+```
+
+**Admin gallery & safety.** The admin image list gains a thumbnail **gallery
+view** (with table toggle), status/orphan/usage badges, a "Used by" panel linking
+to the referencing objects, and Orphaned/Unregistered filters. API and admin
+deletes are **usage-aware** — they refuse to delete an image still in use unless
+forced.
+
+> Bulk operations bypass signals; run `python manage.py reconcile_image_usage`
+> to rebuild the registry (it is idempotent).
 
 ## Development
 

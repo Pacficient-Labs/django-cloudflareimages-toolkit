@@ -26,6 +26,8 @@ INSTALLED_APPS = [
     "django.contrib.sites",
     "rest_framework",
     "django_cloudflareimages_toolkit",
+    # Test-only app providing host models that use CloudflareImageField.
+    "tests",
 ]
 
 MIDDLEWARE = [

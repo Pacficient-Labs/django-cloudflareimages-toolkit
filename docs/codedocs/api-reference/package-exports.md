@@ -17,8 +17,12 @@ from django_cloudflareimages_toolkit import (
     ImageMetadataFactory,
     CloudflareImage,
     ImageUploadLog,
+    ImageUsage,
     ImageUploadStatus,
     cloudflare_service,
+    register_usage,
+    unregister_usage,
+    get_models_with_image_fields,
     CloudflareImageField,
     CloudflareImageWidget,
     CloudflareImagesError,
@@ -31,6 +35,10 @@ from django_cloudflareimages_toolkit import (
     ImageOwnershipError,
 )
 ```
+
+`ImageUsage`, `register_usage`, `unregister_usage`, and
+`get_models_with_image_fields` belong to the image usage registry — see the
+[Image Usage Registry](../image-usage-registry) page.
 
 Top-level metadata:
 
@@ -78,6 +86,7 @@ That mapping points to:
 
 - `django_cloudflareimages_toolkit.models`
 - `django_cloudflareimages_toolkit.services`
+- `django_cloudflareimages_toolkit.registry` (`register_usage`, `unregister_usage`, `get_models_with_image_fields`)
 - `django_cloudflareimages_toolkit.fields`
 - `django_cloudflareimages_toolkit.widgets`
 - `django_cloudflareimages_toolkit.exceptions`

@@ -7,6 +7,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from django_cloudflareimages_toolkit import CloudflareImage, ImageUploadStatus
+from django_cloudflareimages_toolkit.exceptions import CloudflareImagesError
+from django_cloudflareimages_toolkit.services import cloudflare_service
 
 
 class Command(BaseCommand):
@@ -32,6 +34,21 @@ class Command(BaseCommand):
             default=7,
             help="Delete images that have been expired for this many days (default: 7)",
         )
+        parser.add_argument(
+            "--delete-orphans",
+            action="store_true",
+            help=(
+                "Delete uploaded images referenced by no content (orphans) from "
+                "Cloudflare and the database. Relies on the usage registry being "
+                "current — run 'reconcile_image_usage' first for accuracy."
+            ),
+        )
+        parser.add_argument(
+            "--orphan-days",
+            type=int,
+            default=30,
+            help="Only delete orphans older than this many days (default: 30)",
+        )
 
     def handle(self, *args, **options):
         """Handle the command execution."""
@@ -39,6 +56,8 @@ class Command(BaseCommand):
         dry_run = options["dry_run"]
         delete_expired = options["delete"]
         days_threshold = options["days"]
+        delete_orphans = options["delete_orphans"]
+        orphan_days = options["orphan_days"]
 
         # Find expired images
         expired_images = CloudflareImage.objects.filter(
@@ -50,6 +69,8 @@ class Command(BaseCommand):
 
         if expired_count == 0:
             self.stdout.write(self.style.SUCCESS("No expired images found."))
+            if delete_orphans:
+                self._cleanup_orphans(now, orphan_days, dry_run)
             return
 
         if dry_run:
@@ -64,6 +85,8 @@ class Command(BaseCommand):
                 )
             if expired_count > 10:
                 self.stdout.write(f"  ... and {expired_count - 10} more")
+            if delete_orphans:
+                self._cleanup_orphans(now, orphan_days, dry_run)
             return
 
         # Mark images as expired
@@ -95,3 +118,60 @@ class Command(BaseCommand):
                         f"(older than {days_threshold} days)"
                     )
                 )
+
+        # Optionally delete orphaned (unreferenced) uploaded images.
+        if delete_orphans:
+            self._cleanup_orphans(now, orphan_days, dry_run)
+
+    def _cleanup_orphans(self, now, orphan_days, dry_run):
+        """Delete uploaded images referenced by no content (orphans).
+
+        Accuracy depends on the usage registry being current; run
+        ``reconcile_image_usage`` first if host data changed via bulk operations.
+        """
+        threshold = now - timezone.timedelta(days=orphan_days)
+        orphans = CloudflareImage.objects.filter(
+            usages__isnull=True,
+            status=ImageUploadStatus.UPLOADED,
+            created_at__lt=threshold,
+        )
+
+        orphan_count = orphans.count()
+        if orphan_count == 0:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"No orphaned images found (older than {orphan_days} days)"
+                )
+            )
+            return
+
+        if dry_run:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"DRY RUN: Would delete {orphan_count} orphaned image(s) "
+                    f"(older than {orphan_days} days)"
+                )
+            )
+            for image in orphans[:10]:
+                self.stdout.write(f"  - {image.cloudflare_id}")
+            if orphan_count > 10:
+                self.stdout.write(f"  ... and {orphan_count - 10} more")
+            return
+
+        deleted = 0
+        errors = 0
+        for image in orphans:
+            try:
+                cloudflare_service.delete_image(image)
+                image.delete()
+                deleted += 1
+            except CloudflareImagesError:
+                errors += 1
+
+        self.stdout.write(
+            self.style.SUCCESS(f"Deleted {deleted} orphaned image(s) from Cloudflare")
+        )
+        if errors:
+            self.stdout.write(
+                self.style.WARNING(f"Failed to delete {errors} orphaned image(s)")
+            )
