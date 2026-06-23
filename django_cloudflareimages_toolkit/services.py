@@ -75,6 +75,77 @@ class CloudflareImagesService:
         """
         return {"Authorization": f"Bearer {self.api_token}"}
 
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        error_prefix: str,
+        not_found_message: str | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Perform a Cloudflare API call and return the parsed JSON envelope.
+
+        Centralizes the request/response scaffolding that every public method
+        otherwise repeats:
+
+          * injects the per-request ``Authorization`` header,
+          * raises for HTTP status,
+          * parses the JSON body,
+          * enforces Cloudflare's ``success``/``errors`` envelope (joining the
+            returned error messages), and
+          * maps a ``requests.RequestException`` to ``CloudflareImagesError``.
+
+        Each public method then reduces to request-shaping plus handling of the
+        parsed result, so a change to error context, retries, or timeouts is
+        made here once instead of in ~6 copies.
+
+        Args:
+            method: ``requests.Session`` method name (``"get"``, ``"post"``,
+                ``"patch"``, ``"delete"`` ...).
+            url: Fully-qualified Cloudflare endpoint.
+            error_prefix: Human prefix for the raised/logged error
+                (e.g. ``"Failed to get image"``).
+            not_found_message: When provided, an HTTP ``404`` is surfaced as the
+                typed :class:`ImageNotFoundError` (carrying this message) instead
+                of a generic error, preserving the 404 specialization used by
+                ``get_image`` and ``delete_image``. When ``None`` a 404 is
+                treated like any other request failure.
+            **kwargs: Forwarded to the session call (``params``, ``json``,
+                ``files`` ...). Any ``headers`` are merged on top of the auth
+                header.
+
+        Returns:
+            The decoded JSON ``dict`` (the full envelope, including ``result``).
+
+        Raises:
+            ImageNotFoundError: HTTP 404 when ``not_found_message`` is set.
+            CloudflareImagesError: Any other transport/HTTP failure, or a
+                ``success: false`` envelope.
+        """
+        headers = {**self._auth_headers(), **kwargs.pop("headers", {})}
+        try:
+            response = getattr(self.session, method)(url, headers=headers, **kwargs)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            if not_found_message is not None and status_code == 404:
+                # A missing image is a distinct, typed error so callers can react
+                # to it specifically. ImageNotFoundError subclasses
+                # CloudflareImagesError, so existing ``except`` blocks still match.
+                logger.warning(not_found_message)
+                raise ImageNotFoundError(not_found_message, status_code=404) from e
+            logger.error(f"{error_prefix}: {str(e)}")
+            raise CloudflareImagesError(f"{error_prefix}: {str(e)}") from e
+
+        data = response.json()
+        if not data.get("success"):
+            error_msg = ", ".join(
+                err.get("message", "Unknown error") for err in data.get("errors", [])
+            )
+            raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
+        return data
+
     def get_direct_upload_url(
         self,
         user=None,
@@ -199,53 +270,38 @@ class CloudflareImagesService:
         # Make API request
         url = f"{self.base_url}/accounts/{self.account_id}/images/v2/direct_upload"
 
-        try:
-            # This endpoint requires multipart/form-data. Using (None, value) tuples
-            # encodes each field as a plain form field (no filename) so the request
-            # matches Cloudflare's expected -F key=value semantics.
-            files = {k: (None, v) for k, v in form_data.items()}
-            response = self.session.post(url, files=files, headers=self._auth_headers())
-            response.raise_for_status()
+        # This endpoint requires multipart/form-data. Using (None, value) tuples
+        # encodes each field as a plain form field (no filename) so the request
+        # matches Cloudflare's expected -F key=value semantics.
+        files = {k: (None, v) for k, v in form_data.items()}
+        data = self._request(
+            "post", url, error_prefix="Failed to create upload URL", files=files
+        )
 
-            data = response.json()
+        result = data["result"]
 
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
+        # Create CloudflareImage record
+        image = CloudflareImage.objects.create(
+            cloudflare_id=result["id"],
+            user=user,
+            upload_url=result["uploadURL"],
+            status=ImageUploadStatus.PENDING,
+            require_signed_urls=require_signed_urls,
+            metadata=metadata,
+            creator=creator or "",
+            expires_at=expires_at,
+        )
 
-            result = data["result"]
+        # Log the creation
+        ImageUploadLog.objects.create(
+            image=image,
+            event_type="upload_url_created",
+            message="Direct upload URL created successfully",
+            data={"response": result},
+        )
 
-            # Create CloudflareImage record
-            image = CloudflareImage.objects.create(
-                cloudflare_id=result["id"],
-                user=user,
-                upload_url=result["uploadURL"],
-                status=ImageUploadStatus.PENDING,
-                require_signed_urls=require_signed_urls,
-                metadata=metadata,
-                creator=creator or "",
-                expires_at=expires_at,
-            )
-
-            # Log the creation
-            ImageUploadLog.objects.create(
-                image=image,
-                event_type="upload_url_created",
-                message="Direct upload URL created successfully",
-                data={"response": result},
-            )
-
-            logger.info(f"Created direct upload URL for image {image.cloudflare_id}")
-            return image
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to create direct upload URL: {str(e)}")
-            raise CloudflareImagesError(f"Failed to create upload URL: {str(e)}") from e
+        logger.info(f"Created direct upload URL for image {image.cloudflare_id}")
+        return image
 
     def check_image_status(self, image: CloudflareImage) -> dict[str, Any]:
         """
@@ -262,46 +318,22 @@ class CloudflareImagesService:
         """
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image.cloudflare_id}"
 
-        try:
-            response = self.session.get(url, headers=self._auth_headers())
-            response.raise_for_status()
+        data = self._request("get", url, error_prefix="Failed to check image status")
+        result = data["result"]
 
-            data = response.json()
+        # Update the image record
+        image.update_from_cloudflare_response(result)
 
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
+        # Log the status check
+        ImageUploadLog.objects.create(
+            image=image,
+            event_type="status_checked",
+            message=f"Image status checked: {image.status}",
+            data={"response": result},
+        )
 
-            result = data["result"]
-
-            # Update the image record
-            image.update_from_cloudflare_response(result)
-
-            # Log the status check
-            ImageUploadLog.objects.create(
-                image=image,
-                event_type="status_checked",
-                message=f"Image status checked: {image.status}",
-                data={"response": result},
-            )
-
-            logger.info(
-                f"Checked status for image {image.cloudflare_id}: {image.status}"
-            )
-            return result
-
-        except requests.RequestException as e:
-            logger.error(
-                f"Failed to check image status for {image.cloudflare_id}: {str(e)}"
-            )
-            raise CloudflareImagesError(
-                f"Failed to check image status: {str(e)}"
-            ) from e
+        logger.info(f"Checked status for image {image.cloudflare_id}: {image.status}")
+        return result
 
     def list_images(self, page: int = 1, per_page: int = 1000) -> dict[str, Any]:
         """
@@ -324,29 +356,11 @@ class CloudflareImagesService:
             "per_page": min(per_page, MAX_LIST_PER_PAGE),  # Cloudflare max
         }
 
-        try:
-            response = self.session.get(
-                url, params=params, headers=self._auth_headers()
-            )
-            response.raise_for_status()
-
-            data = response.json()
-
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
-
-            logger.info(f"Listed images: page {page}, per_page {per_page}")
-            return data
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to list images: {str(e)}")
-            raise CloudflareImagesError(f"Failed to list images: {str(e)}") from e
+        data = self._request(
+            "get", url, error_prefix="Failed to list images", params=params
+        )
+        logger.info(f"Listed images: page {page}, per_page {per_page}")
+        return data
 
     def get_image(self, image_id: str) -> dict[str, Any]:
         """
@@ -363,37 +377,16 @@ class CloudflareImagesService:
         """
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image_id}"
 
-        try:
-            response = self.session.get(url, headers=self._auth_headers())
-            response.raise_for_status()
-
-            data = response.json()
-
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
-
-            logger.info(f"Retrieved image details for {image_id}")
-            return data
-
-        except requests.RequestException as e:
-            status_code = getattr(getattr(e, "response", None), "status_code", None)
-            if status_code == 404:
-                # A missing image is a distinct, typed error so callers can
-                # react to it specifically. ImageNotFoundError subclasses
-                # CloudflareImagesError, so existing ``except`` blocks still match.
-                logger.warning(f"Image {image_id} not found in Cloudflare")
-                raise ImageNotFoundError(
-                    f"Image {image_id} not found in Cloudflare",
-                    status_code=404,
-                ) from e
-            logger.error(f"Failed to get image {image_id}: {str(e)}")
-            raise CloudflareImagesError(f"Failed to get image: {str(e)}") from e
+        # A 404 is surfaced as the typed ImageNotFoundError (see _request) so
+        # callers like register_uploaded_image can react to a missing image.
+        data = self._request(
+            "get",
+            url,
+            error_prefix="Failed to get image",
+            not_found_message=f"Image {image_id} not found in Cloudflare",
+        )
+        logger.info(f"Retrieved image details for {image_id}")
+        return data
 
     def register_uploaded_image(
         self, cloudflare_id: str, user=None, expected_creator: str | None = None
@@ -554,40 +547,23 @@ class CloudflareImagesService:
         if require_signed_urls is not None:
             update_data["requireSignedURLs"] = require_signed_urls
 
+        data = self._request(
+            "patch", url, error_prefix="Failed to update image", json=update_data
+        )
+
+        # Update local CloudflareImage if it exists
         try:
-            response = self.session.patch(
-                url, json=update_data, headers=self._auth_headers()
-            )
-            response.raise_for_status()
+            image = CloudflareImage.objects.get(cloudflare_id=image_id)
+            if metadata is not None:
+                image.metadata.update(metadata)
+            if require_signed_urls is not None:
+                image.require_signed_urls = require_signed_urls
+            image.save()
+        except CloudflareImage.DoesNotExist:
+            pass
 
-            data = response.json()
-
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
-
-            # Update local CloudflareImage if it exists
-            try:
-                image = CloudflareImage.objects.get(cloudflare_id=image_id)
-                if metadata is not None:
-                    image.metadata.update(metadata)
-                if require_signed_urls is not None:
-                    image.require_signed_urls = require_signed_urls
-                image.save()
-            except CloudflareImage.DoesNotExist:
-                pass
-
-            logger.info(f"Updated image {image_id}")
-            return data
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to update image {image_id}: {str(e)}")
-            raise CloudflareImagesError(f"Failed to update image: {str(e)}") from e
+        logger.info(f"Updated image {image_id}")
+        return data
 
     def delete_image(self, image: CloudflareImage, *, missing_ok: bool = False) -> bool:
         """
@@ -620,51 +596,36 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image.cloudflare_id}"
 
         try:
-            response = self.session.delete(url, headers=self._auth_headers())
-            response.raise_for_status()
-
-            data = response.json()
-
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
-
-            # Log the deletion
-            ImageUploadLog.objects.create(
-                image=image,
-                event_type="image_deleted",
-                message="Image deleted from Cloudflare",
-                data={"response": data},
+            # _request surfaces a Cloudflare 404 as the typed ImageNotFoundError.
+            data = self._request(
+                "delete",
+                url,
+                error_prefix="Failed to delete image",
+                not_found_message=f"Image {image.cloudflare_id} not found in Cloudflare",
             )
+        except ImageNotFoundError:
+            # The image is already gone in Cloudflare. For an idempotent caller
+            # that is the desired end state, so report success and let it remove
+            # the local row; otherwise re-raise the typed not-found error (still
+            # a CloudflareImagesError subclass).
+            if missing_ok:
+                logger.info(
+                    f"Image {image.cloudflare_id} already absent in Cloudflare; "
+                    "treating delete as successful"
+                )
+                return True
+            raise
 
-            logger.info(f"Deleted image {image.cloudflare_id}")
-            return True
+        # Log the deletion
+        ImageUploadLog.objects.create(
+            image=image,
+            event_type="image_deleted",
+            message="Image deleted from Cloudflare",
+            data={"response": data},
+        )
 
-        except requests.RequestException as e:
-            status_code = getattr(getattr(e, "response", None), "status_code", None)
-            if status_code == 404:
-                # The image is already gone in Cloudflare. For an idempotent
-                # caller that is the desired end state, so report success and
-                # let it remove the local row; otherwise surface the typed
-                # not-found error (still a CloudflareImagesError subclass).
-                if missing_ok:
-                    logger.info(
-                        f"Image {image.cloudflare_id} already absent in Cloudflare; "
-                        "treating delete as successful"
-                    )
-                    return True
-                logger.warning(f"Image {image.cloudflare_id} not found in Cloudflare")
-                raise ImageNotFoundError(
-                    f"Image {image.cloudflare_id} not found in Cloudflare",
-                    status_code=404,
-                ) from e
-            logger.error(f"Failed to delete image {image.cloudflare_id}: {str(e)}")
-            raise CloudflareImagesError(f"Failed to delete image: {str(e)}") from e
+        logger.info(f"Deleted image {image.cloudflare_id}")
+        return True
 
     def validate_webhook_signature(self, payload: bytes, signature: str) -> bool:
         """

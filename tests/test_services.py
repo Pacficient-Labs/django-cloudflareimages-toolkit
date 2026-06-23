@@ -535,3 +535,43 @@ class TestRegisterUploaded:
             CloudflareImage.objects.register_uploaded(cid, user=user)
         assert len(responses.calls) == 0
         assert not CloudflareImage.objects.filter(cloudflare_id=cid).exists()
+
+
+# ---------------------------------------------------------------------------
+# Shared request/response handling (#26)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestSharedRequestHandling:
+    """The single ``_request`` helper handles the envelope + error mapping for
+    every method, so these two branches are exercised once via a real method.
+    """
+
+    @responses.activate
+    def test_success_false_envelope_maps_to_error(self):
+        """A ``success: false`` body becomes a CloudflareImagesError with the
+        joined Cloudflare error messages."""
+        responses.add(
+            responses.GET,
+            f"{BASE}/accounts/{ACCOUNT}/images/v1",
+            json={"success": False, "errors": [{"message": "Quota exceeded"}]},
+            status=200,
+        )
+        with pytest.raises(CloudflareImagesError) as exc:
+            cloudflare_service.list_images()
+        assert "Quota exceeded" in str(exc.value)
+
+    @responses.activate
+    def test_transport_error_maps_to_error_with_method_prefix(self):
+        """A non-2xx HTTP status maps to CloudflareImagesError tagged with the
+        calling method's error prefix."""
+        responses.add(
+            responses.GET,
+            f"{BASE}/accounts/{ACCOUNT}/images/v1",
+            json={"success": False, "errors": []},
+            status=500,
+        )
+        with pytest.raises(CloudflareImagesError) as exc:
+            cloudflare_service.list_images()
+        assert "Failed to list images" in str(exc.value)
