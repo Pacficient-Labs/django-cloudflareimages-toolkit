@@ -14,6 +14,11 @@ from typing import Any
 import requests
 from django.utils import timezone
 
+from .constants import (
+    MAX_EXPIRY_MINUTES,
+    MAX_LIST_PER_PAGE,
+    MIN_EXPIRY_MINUTES,
+)
 from .exceptions import (
     CloudflareImagesError,
     ImageNotFoundError,
@@ -168,8 +173,11 @@ class CloudflareImagesService:
                     "METADATA_FACTORY must return a dict of metadata"
                 )
 
-        # Calculate expiry time (must be 2 min to 6 hours in the future per API docs)
-        expiry_minutes = max(2, min(expiry_minutes, 360))
+        # Calculate expiry time (must be 2 min to 6 hours in the future per API
+        # docs); clamp to the shared Cloudflare bounds.
+        expiry_minutes = max(
+            MIN_EXPIRY_MINUTES, min(expiry_minutes, MAX_EXPIRY_MINUTES)
+        )
         expires_at = timezone.now() + timedelta(minutes=expiry_minutes)
 
         # Prepare request data
@@ -298,7 +306,8 @@ class CloudflareImagesService:
 
         Args:
             page: Page number for pagination (default: 1)
-            per_page: Number of images per page (default: 1000, max: 10000)
+            per_page: Number of images per page (default: 1000; clamped to the
+                Cloudflare maximum, ``MAX_LIST_PER_PAGE``)
 
         Returns:
             Dictionary with pagination info and list of images
@@ -309,7 +318,7 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1"
         params = {
             "page": page,
-            "per_page": min(per_page, 10000),  # Cloudflare max is 10000
+            "per_page": min(per_page, MAX_LIST_PER_PAGE),  # Cloudflare max
         }
 
         try:

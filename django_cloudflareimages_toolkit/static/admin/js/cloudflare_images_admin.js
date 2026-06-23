@@ -118,24 +118,12 @@
             }
         });
 
-        // Add status indicators
-        $('.status-indicator').each(function() {
-            const status = $(this).text().toLowerCase();
-            const colors = {
-                'pending': '#ffc107',
-                'draft': '#17a2b8',
-                'uploaded': '#28a745',
-                'failed': '#dc3545',
-                'expired': '#6c757d'
-            };
-            
-            if (colors[status]) {
-                $(this).css({
-                    'color': colors[status],
-                    'font-weight': 'bold'
-                });
-            }
-        });
+        // NOTE: status badge colours are rendered server-side from the single
+        // source of truth (admin.STATUS_COLORS, also used by the gallery
+        // template's cfimg_status_color filter). The previous duplicated hex
+        // map here targeted ".status-indicator" elements that are never
+        // emitted, so it was dead code re-hardcoding those colours and has
+        // been removed to keep one source of truth for the palette.
     });
 
 })(django.jQuery);

@@ -12,6 +12,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+from .constants import DEFAULT_ALLOWED_FORMATS
 from .models import CloudflareImage, ImageUploadStatus
 from .services import cloudflare_service
 from .widgets import CloudflareImageWidget
@@ -52,7 +53,9 @@ class CloudflareImageField(models.Field):
         self.metadata = metadata or {}
         self.require_signed_urls = require_signed_urls
         self.max_file_size = max_file_size
-        self.allowed_formats = allowed_formats or ["jpeg", "png", "gif", "webp"]
+        # Copy the shared default so the constant is never mutated through a
+        # field instance (and instances don't accidentally share one list).
+        self.allowed_formats = allowed_formats or list(DEFAULT_ALLOWED_FORMATS)
 
         # Set default field options
         kwargs.setdefault("max_length", 255)
@@ -153,7 +156,9 @@ class CloudflareImageField(models.Field):
             kwargs["require_signed_urls"] = self.require_signed_urls
         if self.max_file_size:
             kwargs["max_file_size"] = self.max_file_size
-        if self.allowed_formats != ["jpeg", "png", "gif", "webp"]:
+        # Compare against the shared constant so this migration-serialization
+        # check can never drift from the ``__init__`` default above.
+        if self.allowed_formats != DEFAULT_ALLOWED_FORMATS:
             kwargs["allowed_formats"] = self.allowed_formats
 
         return name, path, args, kwargs

@@ -12,6 +12,8 @@ from django import forms
 from django.forms.renderers import get_default_renderer
 from django.utils.safestring import SafeText, mark_safe
 
+from .constants import DEFAULT_ALLOWED_FORMATS
+
 
 class CloudflareImageWidget(forms.TextInput):
     """
@@ -49,7 +51,9 @@ class CloudflareImageWidget(forms.TextInput):
         self.metadata = metadata or {}
         self.require_signed_urls = require_signed_urls
         self.max_file_size = max_file_size
-        self.allowed_formats = allowed_formats or ["jpeg", "png", "gif", "webp"]
+        # Copy the shared default so the constant is never mutated through a
+        # widget instance (and instances don't accidentally share one list).
+        self.allowed_formats = allowed_formats or list(DEFAULT_ALLOWED_FORMATS)
 
         default_attrs = {"type": "hidden", "class": "cloudflare-image-field"}
         if attrs:
