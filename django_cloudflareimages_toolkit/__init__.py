@@ -15,6 +15,7 @@ from .transformations import (
     CloudflareImageUtils,
     CloudflareImageVariants,
 )
+from .url_factory import CloudflareImageURLFactory, image_url_factory
 
 
 def __getattr__(name):
@@ -56,6 +57,8 @@ __all__ = [
     "CloudflareImageTransform",
     "CloudflareImageVariants",
     "CloudflareImageUtils",
+    "CloudflareImageURLFactory",
+    "image_url_factory",
     "ImageMetadataFactory",
     "CloudflareImage",
     "ImageUploadLog",

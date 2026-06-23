@@ -7,6 +7,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release notes are also published on
 [GitHub Releases](https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/releases).
 
+## [Unreleased]
+
+### Added
+
+- **Configurable image delivery URL.** New `CLOUDFLARE_IMAGES` keys let site
+  admins serve images from an alternate domain instead of the shared
+  `imagedelivery.net`: `DELIVERY_URL` (the alternate host or base URL),
+  `DELIVERY_PATH_PREFIX` (default `cdn-cgi/imagedelivery`; set to `''` for a
+  Worker proxy), and `DELIVERY_INCLUDE_ACCOUNT_HASH` (default `True`; set to
+  `False` for a Worker proxy). When `DELIVERY_URL` is unset the shared domain is
+  used and behavior is unchanged.
+- **`CloudflareImageURLFactory` and the `image_url_factory` singleton.** A new
+  single source of truth for building, recognizing, extracting from, and
+  rewriting Cloudflare Images delivery URLs. Both are exported from the package
+  root. See the new `docs/url_factory.rst` guide.
+
+### Changed
+
+- **Delivery URL construction is centralized through the URL factory.**
+  `CloudflareImage.get_variant_url` (and therefore `public_url` / `thumbnail_url`),
+  the `CloudflareImageField` URL fallback, and the `CloudflareImageUtils` helpers
+  (`is_cloudflare_image_url`, `extract_image_id`, `validate_image_url`) plus
+  `CloudflareImageTransform` now honor a configured custom delivery domain and
+  recognize its URLs. Stored Cloudflare variants (always returned on
+  `imagedelivery.net`) are rewritten to the configured domain on read, preserving
+  any query string such as signed-URL parameters.
+
 ## [1.1.0] - 2026-06-14
 
 ### Added

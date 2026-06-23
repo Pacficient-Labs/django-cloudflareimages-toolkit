@@ -232,12 +232,11 @@ class CloudflareImageFieldValue:
         if self.cloudflare_image:
             return self.cloudflare_image.public_url
 
-        # Fallback to generating URL from settings
+        # Fallback to generating URL from settings via the URL factory
         try:
-            from .settings import cloudflare_settings
+            from .url_factory import image_url_factory
 
-            account_hash = cloudflare_settings.account_hash
-            return f"https://imagedelivery.net/{account_hash}/{self.cloudflare_id}/{variant}"
+            return image_url_factory.build_url(self.cloudflare_id, variant)
         except Exception:
             pass
 

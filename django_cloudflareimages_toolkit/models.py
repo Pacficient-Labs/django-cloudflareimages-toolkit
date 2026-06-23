@@ -177,20 +177,29 @@ class CloudflareImage(models.Model):
         if not self.variants:
             return None
 
+        from .url_factory import image_url_factory
+
+        found: str | None = None
         if isinstance(self.variants, list):
             # Variants are full URLs - find one ending with the variant name
             for variant_url in self.variants:
                 if variant_url.rstrip("/").endswith(f"/{variant_name}"):
-                    return variant_url
-            # Fallback: check if variant name appears anywhere in URL
-            for variant_url in self.variants:
-                if variant_name in variant_url:
-                    return variant_url
+                    found = variant_url
+                    break
+            else:
+                # Fallback: check if variant name appears anywhere in URL
+                for variant_url in self.variants:
+                    if variant_name in variant_url:
+                        found = variant_url
+                        break
         elif isinstance(self.variants, dict):
             # Handle dict format if Cloudflare ever returns that
-            return self.variants.get(variant_name)
+            found = self.variants.get(variant_name)
 
-        return None
+        if found is None:
+            return None
+        # Honor a configured custom delivery domain (no-op when unconfigured).
+        return image_url_factory.rewrite_url(found)
 
     @property
     def is_ready(self) -> bool:

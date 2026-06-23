@@ -45,6 +45,11 @@ You can customize additional behavior with these optional settings:
        'METADATA_FACTORY': None,              # Dotted path / callable for metadata
        'WEBHOOK_SECRET': 'your-webhook-secret', # For webhook signature verification
        'MAX_FILE_SIZE_MB': 10,                # Maximum file size accessor (MB)
+
+       # Custom delivery URL (defaults to imagedelivery.net when unset)
+       'DELIVERY_URL': None,                  # Alternate delivery domain
+       'DELIVERY_PATH_PREFIX': 'cdn-cgi/imagedelivery',  # Path prefix after the domain
+       'DELIVERY_INCLUDE_ACCOUNT_HASH': True, # Whether the hash appears in the path
    }
 
 Upload Defaults
@@ -69,6 +74,75 @@ per-request parameters always win.
 
    The factory is trusted server-side code and has the final say, so it can
    augment or override keys supplied by the client.
+
+Custom Delivery URL
+~~~~~~~~~~~~~~~~~~~~
+
+By default the toolkit serves images from Cloudflare's shared
+``imagedelivery.net`` domain. Site admins can serve from an alternate domain by
+setting ``DELIVERY_URL``. All URL construction is centralized in the
+:doc:`url_factory`, so this single setting changes every URL the toolkit
+generates — model properties (``public_url``, ``thumbnail_url``), the
+``CloudflareImageField`` fallback, and the transformation helpers.
+
+- **DELIVERY_URL**: Alternate delivery domain. Accepts a bare host
+  (``images.example.com``) or a full base URL (``https://images.example.com``).
+  When ``None`` (default), the shared ``imagedelivery.net`` domain is used and
+  behavior is unchanged.
+- **DELIVERY_PATH_PREFIX**: Path segment(s) inserted after the domain (default
+  ``cdn-cgi/imagedelivery``). Set to an empty string for a Cloudflare Worker
+  proxy that serves from the domain root. Ignored when ``DELIVERY_URL`` is unset.
+- **DELIVERY_INCLUDE_ACCOUNT_HASH**: Whether the account hash appears in the
+  path (default ``True``). Set to ``False`` for a Worker proxy that injects the
+  hash itself. Ignored when ``DELIVERY_URL`` is unset.
+
+The three settings combine to produce three common URL shapes:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 28 50
+
+   * - Shape
+     - Settings
+     - Resulting URL
+   * - Default (shared domain)
+     - ``DELIVERY_URL`` unset
+     - ``https://imagedelivery.net/<hash>/<id>/<variant>``
+   * - Native custom domain
+     - ``DELIVERY_URL='images.example.com'``
+     - ``https://images.example.com/cdn-cgi/imagedelivery/<hash>/<id>/<variant>``
+   * - Worker reverse-proxy
+     - ``DELIVERY_URL='cdn.example.com'``,
+       ``DELIVERY_PATH_PREFIX=''``,
+       ``DELIVERY_INCLUDE_ACCOUNT_HASH=False``
+     - ``https://cdn.example.com/<id>/<variant>``
+
+.. note::
+
+   For the **native custom domain** shape the domain must be a Cloudflare-proxied
+   zone on the same account as your Cloudflare Images (Cloudflare's
+   `serve from custom domains
+   <https://developers.cloudflare.com/images/optimization/hosted-images/serve-from-custom-domains/>`_
+   feature).
+
+A minimal Worker for the reverse-proxy shape — it injects the account hash and
+forwards the request to ``imagedelivery.net``, keeping the public URL clean:
+
+.. code-block:: javascript
+
+   export default {
+     async fetch(request) {
+       const accountHash = "YOUR_ACCOUNT_HASH";
+       const { pathname, search } = new URL(request.url);
+       // https://cdn.example.com/<IMAGE_ID>/<VARIANT>
+       //   -> https://imagedelivery.net/<accountHash>/<IMAGE_ID>/<VARIANT>
+       const target = `https://imagedelivery.net/${accountHash}${pathname}${search}`;
+       const resp = await fetch(target, { cf: { cacheEverything: true }, headers: request.headers });
+       const out = new Response(resp.body, resp);
+       out.headers.set("Cache-Control", "public, max-age=31536000, immutable");
+       return out;
+     },
+   };
 
 Environment Variables
 ---------------------

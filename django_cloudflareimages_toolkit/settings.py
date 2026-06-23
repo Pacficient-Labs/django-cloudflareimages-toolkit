@@ -58,6 +58,50 @@ class CloudflareImagesSettings:
         return self._settings.get("BASE_URL", "https://api.cloudflare.com/client/v4")
 
     @property
+    def delivery_url(self) -> str | None:
+        """
+        Alternate delivery domain to use instead of ``imagedelivery.net``.
+
+        Accepts a bare host (``images.example.com``) or a full base URL
+        (``https://images.example.com``). When unset (``None``), delivery URLs
+        use Cloudflare's shared ``imagedelivery.net`` domain.
+
+        See :class:`~django_cloudflareimages_toolkit.url_factory.CloudflareImageURLFactory`
+        for how this combines with ``DELIVERY_PATH_PREFIX`` and
+        ``DELIVERY_INCLUDE_ACCOUNT_HASH``.
+        """
+        value = self._settings.get("DELIVERY_URL")
+        if value is None:
+            return None
+        value = str(value).strip()
+        return value or None
+
+    @property
+    def delivery_path_prefix(self) -> str:
+        """
+        Path prefix inserted after a custom ``DELIVERY_URL`` host.
+
+        Defaults to ``"cdn-cgi/imagedelivery"`` (Cloudflare's native
+        custom-domain format). Set to an empty string for a Worker-style proxy
+        that serves images directly from the domain root. Ignored when
+        ``DELIVERY_URL`` is not configured.
+        """
+        prefix = self._settings.get("DELIVERY_PATH_PREFIX", "cdn-cgi/imagedelivery")
+        return str(prefix).strip("/")
+
+    @property
+    def delivery_include_account_hash(self) -> bool:
+        """
+        Whether the account hash appears in custom delivery URLs.
+
+        Defaults to ``True`` (native custom-domain format). Set to ``False`` for
+        a Worker-style proxy that injects the account hash itself, producing
+        clean ``https://<domain>/<image_id>/<variant>`` URLs. Ignored when
+        ``DELIVERY_URL`` is not configured.
+        """
+        return bool(self._settings.get("DELIVERY_INCLUDE_ACCOUNT_HASH", True))
+
+    @property
     def default_expiry_minutes(self) -> int:
         """Default expiry time for upload URLs in minutes."""
         return self._settings.get("DEFAULT_EXPIRY_MINUTES", 30)
