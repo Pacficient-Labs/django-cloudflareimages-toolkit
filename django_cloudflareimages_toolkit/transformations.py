@@ -7,6 +7,9 @@ transformations, variants, and delivery options.
 
 import re
 from typing import Any
+from urllib.parse import urlsplit
+
+from .url_factory import image_url_factory
 
 
 class CloudflareImageTransform:
@@ -36,10 +39,16 @@ class CloudflareImageTransform:
             zone: Optional zone/domain for Image Resizing (cdn-cgi format).
                   If not provided, assumes Cloudflare Images (imagedelivery.net).
         """
-        self.base_url = base_url.rstrip("/")
+        # Rewrite a shared imagedelivery.net URL to the configured custom domain
+        # (no-op when no DELIVERY_URL is set), so transforms honor the delivery
+        # domain regardless of the input host.
+        self.base_url = image_url_factory.rewrite_url(base_url.rstrip("/"))
         self.zone = zone
         self.transforms: dict[str, Any] = {}
-        self._is_imagedelivery = "imagedelivery.net" in base_url
+        # Recognize the shared imagedelivery.net host as well as any configured
+        # custom delivery domain (DELIVERY_URL), so flexible-variant rewriting
+        # works for all delivery URL shapes.
+        self._is_imagedelivery = image_url_factory.is_delivery_url(self.base_url)
 
     def width(self, width: int) -> "CloudflareImageTransform":
         """Set image width."""
@@ -217,13 +226,10 @@ class CloudflareImageTransform:
         options = self._build_options_string()
 
         if self._is_imagedelivery:
-            # Cloudflare Images flexible variant format
-            # URL: https://imagedelivery.net/<hash>/<id>/<options>
-            # Replace the variant name (last path segment) with options
-            parts = self.base_url.rsplit("/", 1)
-            if len(parts) == 2:
-                return f"{parts[0]}/{options}"
-            return f"{self.base_url}/{options}"
+            # Cloudflare Images flexible variant format. The factory swaps the
+            # variant segment for the options, or appends them when the URL has
+            # no variant (so a no-variant id is not overwritten).
+            return image_url_factory.with_options(self.base_url, options)
 
         if self.zone:
             # Image Resizing with explicit zone
@@ -346,16 +352,21 @@ class CloudflareImageUtils:
 
     @staticmethod
     def extract_image_id(url: str) -> str | None:
-        """Extract image ID from Cloudflare Images URL."""
-        # Pattern: https://imagedelivery.net/{account_hash}/{image_id}/{variant}
-        pattern = r"https://imagedelivery\.net/[^/]+/([^/]+)(?:/[^/]+)?"
-        match = re.search(pattern, url)
-        return match.group(1) if match else None
+        """Extract image ID from a Cloudflare Images delivery URL.
+
+        Recognizes the shared ``imagedelivery.net`` host and any configured
+        custom delivery domain (``DELIVERY_URL``).
+        """
+        return image_url_factory.extract_image_id(url)
 
     @staticmethod
     def is_cloudflare_image_url(url: str) -> bool:
-        """Check if URL is a Cloudflare Images URL."""
-        return "imagedelivery.net" in url
+        """Check if URL is a Cloudflare Images delivery URL.
+
+        Recognizes the shared ``imagedelivery.net`` host and any configured
+        custom delivery domain (``DELIVERY_URL``).
+        """
+        return image_url_factory.is_delivery_url(url)
 
     @staticmethod
     def get_srcset(base_url: str, widths: list[int], quality: int = 85) -> str:
@@ -386,10 +397,17 @@ class CloudflareImageUtils:
 
     @staticmethod
     def validate_image_url(url: str) -> bool:
-        """Validate if the URL is a properly formatted Cloudflare Images URL."""
-        if not CloudflareImageUtils.is_cloudflare_image_url(url):
-            return False
+        """Validate that the URL is a usable Cloudflare Images delivery URL.
 
-        # Check URL structure
-        pattern = r"^https://imagedelivery\.net/[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)?(?:\?.*)?$"
-        return bool(re.match(pattern, url))
+        A URL is valid when it is an absolute ``https`` URL recognized as a
+        delivery URL (shared ``imagedelivery.net`` host or a configured custom
+        domain) from which an image id can be extracted. Non-HTTPS and
+        scheme-less inputs are rejected.
+        """
+        parts = urlsplit(url)
+        if parts.scheme != "https" or not parts.netloc:
+            return False
+        return (
+            image_url_factory.is_delivery_url(url)
+            and image_url_factory.extract_image_id(url) is not None
+        )

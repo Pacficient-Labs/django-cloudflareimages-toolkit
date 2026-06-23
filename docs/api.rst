@@ -579,6 +579,20 @@ Django app configuration class.
 * ``name``: App name for Django's app registry
 * ``verbose_name``: Human-readable app name
 
+Image URL Factory Class
+-----------------------
+
+.. autoclass:: django_cloudflareimages_toolkit.url_factory.CloudflareImageURLFactory
+   :members:
+   :undoc-members:
+   :show-inheritance:
+   :no-index:
+
+Single source of truth for building, recognizing, extracting from, and rewriting
+Cloudflare Images delivery URLs. The ``image_url_factory`` singleton is exported
+from the package root. See :doc:`url_factory` for a usage guide and the
+``DELIVERY_URL`` configuration.
+
 Exception Classes
 -----------------
 

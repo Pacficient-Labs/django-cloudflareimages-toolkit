@@ -65,11 +65,25 @@ CLOUDFLARE_IMAGES = {
     'METADATA_FACTORY': None,  # Optional: dotted path to an ImageMetadataFactory (see below)
     'WEBHOOK_SECRET': 'your-webhook-secret',  # Optional
     'MAX_FILE_SIZE_MB': 10,  # Optional
+
+    # Optional: serve images from an alternate domain instead of imagedelivery.net
+    'DELIVERY_URL': None,  # e.g. 'images.example.com' (None = use imagedelivery.net)
+    'DELIVERY_PATH_PREFIX': 'cdn-cgi/imagedelivery',  # '' for a Worker proxy
+    'DELIVERY_INCLUDE_ACCOUNT_HASH': True,  # False for a Worker proxy
 }
 # These deployment-time defaults are intended to be env-backed in your project.
 # Per-request values always take precedence over the settings defaults.
 # Note: ACCOUNT_HASH is found in Cloudflare Images dashboard under "Developer Resources"
 # or from any image delivery URL: https://imagedelivery.net/<ACCOUNT_HASH>/...
+#
+# Custom delivery domains (DELIVERY_URL) are routed through the image URL factory,
+# so a single setting changes every URL the toolkit generates. Common shapes:
+#   - Native custom domain: 'images.example.com'
+#       -> https://images.example.com/cdn-cgi/imagedelivery/<hash>/<id>/<variant>
+#   - Worker reverse-proxy: DELIVERY_URL='cdn.example.com',
+#       DELIVERY_PATH_PREFIX='', DELIVERY_INCLUDE_ACCOUNT_HASH=False
+#       -> https://cdn.example.com/<id>/<variant>
+# See docs/url_factory.rst for details.
 
 # REST Framework (if not already configured)
 REST_FRAMEWORK = {
@@ -545,6 +559,9 @@ for image in images:
 | `REQUIRE_SIGNED_URLS` | `True` | Require signed URLs by default |
 | `WEBHOOK_SECRET` | `None` | Secret for webhook signature validation |
 | `MAX_FILE_SIZE_MB` | `10` | Maximum file size in MB |
+| `DELIVERY_URL` | `None` | Alternate delivery domain instead of `imagedelivery.net` (bare host or full URL) |
+| `DELIVERY_PATH_PREFIX` | `cdn-cgi/imagedelivery` | Path prefix after a custom `DELIVERY_URL` (use `''` for a Worker proxy) |
+| `DELIVERY_INCLUDE_ACCOUNT_HASH` | `True` | Whether the account hash appears in custom delivery URLs (`False` for a Worker proxy) |
 
 ## Models
 

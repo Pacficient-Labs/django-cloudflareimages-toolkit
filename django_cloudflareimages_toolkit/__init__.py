@@ -17,6 +17,7 @@ from .transformations import (
     CloudflareImageUtils,
     CloudflareImageVariants,
 )
+from .url_factory import CloudflareImageURLFactory, image_url_factory
 
 if TYPE_CHECKING:
     # Static-only re-exports of the names served at runtime by __getattr__.
@@ -86,6 +87,8 @@ __all__ = [
     "CloudflareImageTransform",
     "CloudflareImageVariants",
     "CloudflareImageUtils",
+    "CloudflareImageURLFactory",
+    "image_url_factory",
     "ImageMetadataFactory",
     "CloudflareImage",
     "ImageUploadLog",

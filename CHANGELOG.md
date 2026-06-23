@@ -11,6 +11,17 @@ Release notes are also published on
 
 ### Added
 
+- **Configurable image delivery URL.** New `CLOUDFLARE_IMAGES` keys let site
+  admins serve images from an alternate domain instead of the shared
+  `imagedelivery.net`: `DELIVERY_URL` (the alternate host or base URL),
+  `DELIVERY_PATH_PREFIX` (default `cdn-cgi/imagedelivery`; set to `''` for a
+  Worker proxy), and `DELIVERY_INCLUDE_ACCOUNT_HASH` (default `True`; set to
+  `False` for a Worker proxy). When `DELIVERY_URL` is unset the shared domain is
+  used and behavior is unchanged.
+- **`CloudflareImageURLFactory` and the `image_url_factory` singleton.** A new
+  single source of truth for building, recognizing, extracting from, and
+  rewriting Cloudflare Images delivery URLs. Both are exported from the package
+  root. See the new `docs/url_factory.rst` guide.
 - **Image Usage Registry (SSOT).** A new `ImageUsage` model and registry track
   *which content references each image*, complementing `CloudflareImage` (what
   has been uploaded). Every `CloudflareImageField` across installed apps is
@@ -39,6 +50,17 @@ Release notes are also published on
   host models (the fix for signal-bypassing bulk operations) and reports
   orphans/unregistered references. `cleanup_expired_images` gains opt-in
   `--delete-orphans` / `--orphan-days N` flags.
+
+### Changed
+
+- **Delivery URL construction is centralized through the URL factory.**
+  `CloudflareImage.get_variant_url` (and therefore `public_url` / `thumbnail_url`),
+  the `CloudflareImageField` URL fallback, and the `CloudflareImageUtils` helpers
+  (`is_cloudflare_image_url`, `extract_image_id`, `validate_image_url`) plus
+  `CloudflareImageTransform` now honor a configured custom delivery domain and
+  recognize its URLs. Stored Cloudflare variants (always returned on
+  `imagedelivery.net`) are rewritten to the configured domain on read, preserving
+  any query string such as signed-URL parameters.
 
 ### Fixed
 

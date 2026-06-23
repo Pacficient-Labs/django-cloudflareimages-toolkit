@@ -9,6 +9,7 @@ Django integration for Cloudflare Images API with secure direct upload support.
 
    installation
    configuration
+   url_factory
    usage
    webhooks
    patterns
@@ -88,6 +89,7 @@ Documentation Sections
 
 * :doc:`installation` - Installation and setup guide
 * :doc:`configuration` - Configuration options and settings
+* :doc:`url_factory` - Custom delivery domains and the image URL factory
 * :doc:`usage` - Usage examples and best practices
 * :doc:`webhooks` - Webhook setup and the response-code contract
 * :doc:`patterns` - Production patterns: resilience, authorization, watermarking
