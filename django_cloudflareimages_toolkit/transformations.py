@@ -7,6 +7,7 @@ transformations, variants, and delivery options.
 
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from .url_factory import image_url_factory
 
@@ -38,13 +39,16 @@ class CloudflareImageTransform:
             zone: Optional zone/domain for Image Resizing (cdn-cgi format).
                   If not provided, assumes Cloudflare Images (imagedelivery.net).
         """
-        self.base_url = base_url.rstrip("/")
+        # Rewrite a shared imagedelivery.net URL to the configured custom domain
+        # (no-op when no DELIVERY_URL is set), so transforms honor the delivery
+        # domain regardless of the input host.
+        self.base_url = image_url_factory.rewrite_url(base_url.rstrip("/"))
         self.zone = zone
         self.transforms: dict[str, Any] = {}
         # Recognize the shared imagedelivery.net host as well as any configured
         # custom delivery domain (DELIVERY_URL), so flexible-variant rewriting
         # works for all delivery URL shapes.
-        self._is_imagedelivery = image_url_factory.is_delivery_url(base_url)
+        self._is_imagedelivery = image_url_factory.is_delivery_url(self.base_url)
 
     def width(self, width: int) -> "CloudflareImageTransform":
         """Set image width."""
@@ -222,13 +226,10 @@ class CloudflareImageTransform:
         options = self._build_options_string()
 
         if self._is_imagedelivery:
-            # Cloudflare Images flexible variant format
-            # URL: https://imagedelivery.net/<hash>/<id>/<options>
-            # Replace the variant name (last path segment) with options
-            parts = self.base_url.rsplit("/", 1)
-            if len(parts) == 2:
-                return f"{parts[0]}/{options}"
-            return f"{self.base_url}/{options}"
+            # Cloudflare Images flexible variant format. The factory swaps the
+            # variant segment for the options, or appends them when the URL has
+            # no variant (so a no-variant id is not overwritten).
+            return image_url_factory.with_options(self.base_url, options)
 
         if self.zone:
             # Image Resizing with explicit zone
@@ -398,10 +399,14 @@ class CloudflareImageUtils:
     def validate_image_url(url: str) -> bool:
         """Validate that the URL is a usable Cloudflare Images delivery URL.
 
-        A URL is considered valid when it is recognized as a delivery URL (shared
-        ``imagedelivery.net`` host or a configured custom domain) and an image id
-        can be extracted from it.
+        A URL is valid when it is an absolute ``https`` URL recognized as a
+        delivery URL (shared ``imagedelivery.net`` host or a configured custom
+        domain) from which an image id can be extracted. Non-HTTPS and
+        scheme-less inputs are rejected.
         """
+        parts = urlsplit(url)
+        if parts.scheme != "https" or not parts.netloc:
+            return False
         return (
             image_url_factory.is_delivery_url(url)
             and image_url_factory.extract_image_id(url) is not None

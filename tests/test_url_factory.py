@@ -401,6 +401,75 @@ class MultiSegmentRoundTripTest(TestCase):
         self.assertEqual(image_url_factory.extract_image_id(url), "folder/sub")
 
 
+@cf_settings(**WORKER)
+class NoVariantTransformTest(TestCase):
+    """Transforming a no-variant URL must not drop the image id (P2)."""
+
+    def test_with_options_appends_when_no_variant(self):
+        url = f"https://cdn.example.com/{IMAGE_ID}"
+        self.assertEqual(
+            image_url_factory.with_options(url, "width=300"),
+            f"https://cdn.example.com/{IMAGE_ID}/width=300",
+        )
+
+    def test_with_options_replaces_when_variant_present(self):
+        url = f"https://cdn.example.com/{IMAGE_ID}/public"
+        self.assertEqual(
+            image_url_factory.with_options(url, "width=300"),
+            f"https://cdn.example.com/{IMAGE_ID}/width=300",
+        )
+
+    def test_transform_preserves_id_for_no_variant_url(self):
+        from django_cloudflareimages_toolkit.transformations import (
+            CloudflareImageTransform,
+        )
+
+        url = (
+            CloudflareImageTransform(f"https://cdn.example.com/{IMAGE_ID}")
+            .width(300)
+            .build()
+        )
+        self.assertEqual(url, f"https://cdn.example.com/{IMAGE_ID}/width=300")
+
+
+@cf_settings()
+class ValidateHttpsTest(TestCase):
+    """validate_image_url requires an absolute https URL (P2)."""
+
+    def _validate(self, url):
+        from django_cloudflareimages_toolkit.transformations import CloudflareImageUtils
+
+        return CloudflareImageUtils.validate_image_url(url)
+
+    def test_rejects_http_scheme(self):
+        self.assertFalse(
+            self._validate(f"http://imagedelivery.net/{HASH}/{IMAGE_ID}/public")
+        )
+
+    def test_rejects_scheme_less(self):
+        self.assertFalse(self._validate(f"imagedelivery.net/{HASH}/{IMAGE_ID}/public"))
+
+    def test_accepts_https(self):
+        self.assertTrue(self._validate(IMG_URL))
+
+
+@cf_settings(DELIVERY_URL="images.example.com")
+class TransformRewritesSharedHostTest(TestCase):
+    """Transforms honor DELIVERY_URL even when given a shared-host URL (P2)."""
+
+    def test_shared_host_input_rewritten_to_custom_domain(self):
+        from django_cloudflareimages_toolkit.transformations import (
+            CloudflareImageTransform,
+        )
+
+        url = CloudflareImageTransform(IMG_URL).width(300).build()
+        self.assertEqual(
+            url,
+            "https://images.example.com/cdn-cgi/imagedelivery/"
+            f"{HASH}/{IMAGE_ID}/width=300",
+        )
+
+
 class SingletonTest(TestCase):
     def test_singleton_is_factory_instance(self):
         self.assertIsInstance(image_url_factory, CloudflareImageURLFactory)

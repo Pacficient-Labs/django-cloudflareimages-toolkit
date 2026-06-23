@@ -217,44 +217,40 @@ class CloudflareImageURLFactory:
             from "id + variant" and will lose its last segment here. Pair
             custom-path ids with a variant for reliable round-tripping.
         """
+        return self._split_id_variant(url)[0]
+
+    def _split_id_variant(self, url: str) -> tuple[str | None, str | None]:
+        """Return ``(image_id, variant)`` for a delivery URL, else ``(None, None)``.
+
+        ``variant`` is ``None`` when the URL carries no trailing variant segment
+        (e.g. a no-variant custom URL). This is the single place that splits a
+        delivery URL into its id and variant for every other helper.
+        """
         if not self.is_delivery_url(url):
-            return None
+            return None, None
         parts = urlsplit(url if "://" in url else f"//{url}")
         path = parts.path.strip("/")
         if not path:
-            return None
-        segments = path.split("/")
+            return None, None
+        segs = path.split("/")
 
         if parts.netloc == self.DEFAULT_HOST:
-            # imagedelivery.net/<hash>/<id...>[/<variant>]
-            return self._image_id_from_segments(
-                segments, has_prefix=False, has_hash=True
-            )
-
-        # Configured custom domain.
-        return self._image_id_from_segments(
-            segments,
-            has_prefix=bool(self.path_prefix),
-            has_hash=self.include_account_hash,
-        )
-
-    def _image_id_from_segments(
-        self, segments: list[str], *, has_prefix: bool, has_hash: bool
-    ) -> str | None:
-        """Resolve the image id from path segments for the imagedelivery shape."""
-        segs = list(segments)
-        if has_prefix:
-            prefix_segs = self.path_prefix.split("/")
-            if segs[: len(prefix_segs)] == prefix_segs:
-                segs = segs[len(prefix_segs) :]
-        if has_hash and segs:
             segs = segs[1:]  # drop the account hash
+        else:
+            # Configured custom domain: strip the prefix then the optional hash.
+            if self.path_prefix:
+                prefix_segs = self.path_prefix.split("/")
+                if segs[: len(prefix_segs)] == prefix_segs:
+                    segs = segs[len(prefix_segs) :]
+            if self.include_account_hash and segs:
+                segs = segs[1:]
+
         if len(segs) >= 2:
             # Last segment is the variant/options; the rest is the id.
-            return "/".join(segs[:-1])
+            return "/".join(segs[:-1]), segs[-1]
         if len(segs) == 1:
-            return segs[0]
-        return None
+            return segs[0], None
+        return None, None
 
     def split_variant(self, url: str) -> tuple[str, str | None]:
         """Split a delivery URL into ``(base_without_last_segment, last_segment)``.
@@ -269,6 +265,25 @@ class CloudflareImageURLFactory:
         head, _, last = path.rpartition("/")
         base = urlunsplit((parts.scheme, parts.netloc, head, "", ""))
         return base, (last or None)
+
+    def with_options(self, url: str, options: str) -> str:
+        """Return a flexible-variant URL applying ``options`` to ``url``.
+
+        When the delivery URL carries a variant segment, that segment is replaced
+        by ``options``. When it has no variant (e.g. a no-variant custom URL),
+        the options are appended so the image id is preserved rather than
+        overwritten. Query string and fragment are preserved.
+        """
+        _, variant = self._split_id_variant(url)
+        parts = urlsplit(url if "://" in url else f"//{url}")
+        path = parts.path.rstrip("/")
+        if variant is not None and "/" in path.strip("/"):
+            new_path = f"{path.rsplit('/', 1)[0]}/{options}"
+        else:
+            new_path = f"{path}/{options}"
+        return urlunsplit(
+            (parts.scheme, parts.netloc, new_path, parts.query, parts.fragment)
+        )
 
     # ----------------------------------------------------------------- rewrite
 
