@@ -63,20 +63,25 @@ def test_model_index_names_are_explicit_and_valid():
 
     Explicit names are deterministic across Django versions (no hash-based
     auto-naming), and the length cap is the one 0001/0003 violated. This guards
-    both regressions cheaply, without touching the database.
+    both regressions cheaply, without touching the database. Violations are
+    collected so the failure message reports every offender at once.
     """
+    problems: list[str] = []
     for model in apps.get_app_config(APP_LABEL).get_models():
-        for index in model._meta.indexes:
-            assert index.name, (
-                f"{model.__name__}: index on {index.fields} has no explicit name"
-            )
-            assert len(index.name) <= MAX_NAME_LEN, (
-                f"{model.__name__}: index name {index.name!r} is "
-                f"{len(index.name)} chars (> {MAX_NAME_LEN}; trips models.E034)"
-            )
-        for constraint in model._meta.constraints:
-            assert constraint.name, f"{model.__name__}: unnamed constraint"
-            assert len(constraint.name) <= MAX_NAME_LEN, (
-                f"{model.__name__}: constraint name {constraint.name!r} is "
-                f"{len(constraint.name)} chars (> {MAX_NAME_LEN})"
-            )
+        named = [(idx.name, idx.fields, "index") for idx in model._meta.indexes]
+        named += [
+            (c.name, getattr(c, "fields", None), "constraint")
+            for c in model._meta.constraints
+        ]
+        for name, fields, kind in named:
+            if not name:
+                problems.append(f"{model.__name__}: unnamed {kind} on {fields}")
+            elif len(name) > MAX_NAME_LEN:
+                problems.append(
+                    f"{model.__name__}: {kind} name {name!r} is {len(name)} "
+                    f"chars (> {MAX_NAME_LEN}; trips models.E034)"
+                )
+    if problems:
+        pytest.fail(
+            "Implicit or over-long index/constraint names:\n" + "\n".join(problems)
+        )
