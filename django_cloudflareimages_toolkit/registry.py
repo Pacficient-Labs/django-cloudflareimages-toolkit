@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from django.apps import apps as django_apps
 from django.contrib.contenttypes.models import ContentType
+from django.db.utils import DEFAULT_DB_ALIAS
 
 # ``field_name`` used for references recorded through the manual API.
 MANUAL_FIELD_NAME = "manual"
@@ -78,58 +79,81 @@ def _extract_cloudflare_id(value) -> str | None:
     return None
 
 
-def _resolve_image(cloudflare_id: str):
+def _db(using):
+    """Resolve a database alias, defaulting to Django's default DB."""
+    return using or DEFAULT_DB_ALIAS
+
+
+def _content_type_for(model, using=None):
+    """Get the ContentType for ``model`` on the targeted database.
+
+    ``ContentType.objects.get_for_model`` caches across databases, so we use
+    ``db_manager`` to ensure the row is fetched (and, on first use, created) on
+    the database where the related rows actually live.
+    """
+    return ContentType.objects.db_manager(_db(using)).get_for_model(model)
+
+
+def _resolve_image(cloudflare_id: str, using=None):
     """Return the CloudflareImage for ``cloudflare_id`` if one exists, else None."""
     from .models import CloudflareImage
 
-    return CloudflareImage.objects.filter(cloudflare_id=cloudflare_id).first()
+    return (
+        CloudflareImage.objects.using(_db(using))
+        .filter(cloudflare_id=cloudflare_id)
+        .first()
+    )
 
 
-def record_usage(content_type, object_id, field_name: str, cloudflare_id: str):
+def record_usage(
+    content_type, object_id, field_name: str, cloudflare_id: str, using=None
+):
     """Idempotently upsert one usage row. The single shared write path."""
     from .models import ImageUsage
 
-    usage, _ = ImageUsage.objects.update_or_create(
+    usage, _ = ImageUsage.objects.using(_db(using)).update_or_create(
         content_type=content_type,
         object_id=str(object_id),
         field_name=field_name,
         defaults={
             "cloudflare_id": cloudflare_id,
-            "image": _resolve_image(cloudflare_id),
+            "image": _resolve_image(cloudflare_id, using=using),
         },
     )
     return usage
 
 
-def clear_usage(content_type, object_id, field_name: str) -> None:
+def clear_usage(content_type, object_id, field_name: str, using=None) -> None:
     """Remove the usage row for a (object, field) if present (idempotent)."""
     from .models import ImageUsage
 
-    ImageUsage.objects.filter(
+    ImageUsage.objects.using(_db(using)).filter(
         content_type=content_type, object_id=str(object_id), field_name=field_name
     ).delete()
 
 
-def sync_object(instance) -> None:
+def sync_object(instance, using=None) -> None:
     """Synchronise usage rows for every tracked field on a single instance."""
     field_names = get_tracked_field_names(type(instance))
     if not field_names:
         return
-    content_type = ContentType.objects.get_for_model(type(instance))
+    content_type = _content_type_for(type(instance), using=using)
     for field_name in field_names:
         cloudflare_id = _extract_cloudflare_id(getattr(instance, field_name, None))
         if cloudflare_id:
-            record_usage(content_type, instance.pk, field_name, cloudflare_id)
+            record_usage(
+                content_type, instance.pk, field_name, cloudflare_id, using=using
+            )
         else:
-            clear_usage(content_type, instance.pk, field_name)
+            clear_usage(content_type, instance.pk, field_name, using=using)
 
 
-def clear_object(instance) -> None:
+def clear_object(instance, using=None) -> None:
     """Remove every usage row attached to a (deleted) instance."""
     from .models import ImageUsage
 
-    content_type = ContentType.objects.get_for_model(type(instance))
-    ImageUsage.objects.filter(
+    content_type = _content_type_for(type(instance), using=using)
+    ImageUsage.objects.using(_db(using)).filter(
         content_type=content_type, object_id=str(instance.pk)
     ).delete()
 
@@ -154,11 +178,37 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
     Returns:
         The created or updated :class:`~...models.ImageUsage` row.
     """
-    content_type = ContentType.objects.get_for_model(type(obj))
-    return record_usage(content_type, obj.pk, field_name, cloudflare_id)
+    model = type(obj)
+    using = obj._state.db
+    content_type = _content_type_for(model, using=using)
+    usage = record_usage(content_type, obj.pk, field_name, cloudflare_id, using=using)
+    # Ensure the owner's deletion clears its usage rows even when the model has
+    # no CloudflareImageField (and so was never wired in apps.ready()).
+    ensure_delete_cleanup(model)
+    return usage
 
 
 def unregister_usage(obj, field_name: str = MANUAL_FIELD_NAME) -> None:
     """Remove a manually-registered usage for ``obj`` (idempotent)."""
-    content_type = ContentType.objects.get_for_model(type(obj))
-    clear_usage(content_type, obj.pk, field_name)
+    using = obj._state.db
+    content_type = _content_type_for(type(obj), using=using)
+    clear_usage(content_type, obj.pk, field_name, using=using)
+
+
+def ensure_delete_cleanup(model) -> None:
+    """Connect post_delete usage cleanup for ``model`` (idempotent).
+
+    Auto-discovered models are wired in ``apps.ready()``; this also covers models
+    reachable only through the manual API, so deleting such an owner removes its
+    ``ImageUsage`` rows instead of leaking them. The shared ``dispatch_uid`` makes
+    this a no-op for models already connected.
+    """
+    from django.db.models.signals import post_delete
+
+    from . import signals
+
+    post_delete.connect(
+        signals.remove_instance_usage,
+        sender=model,
+        dispatch_uid=f"cfimg_usage_delete_{model._meta.label}",
+    )

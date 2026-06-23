@@ -16,6 +16,7 @@ from django.db import transaction
 
 from ...models import CloudflareImage, ImageUsage
 from ...registry import (
+    MANUAL_FIELD_NAME,
     _extract_cloudflare_id,
     get_models_with_image_fields,
     record_usage,
@@ -44,9 +45,12 @@ class Command(BaseCommand):
         # Stable iteration order keeps the operation deterministic.
         for model in sorted(registry, key=lambda m: m._meta.label):
             content_type = ContentType.objects.get_for_model(model)
-            # Fetch each model's rows once, then evaluate every tracked field
-            # against them (a model may declare several CloudflareImageFields).
-            instances = list(model.objects.all().order_by("pk"))
+            # Fetch each model's rows once via the *base* manager, then evaluate
+            # every tracked field against them (a model may declare several
+            # CloudflareImageFields). The base manager bypasses a filtered default
+            # manager (soft-delete / tenant scoping) that would otherwise hide
+            # still-referenced rows and get them pruned as stale.
+            instances = list(model._base_manager.all().order_by("pk"))
             for field_name in registry[model]:
                 current = {}
                 for instance in instances:
@@ -80,9 +84,72 @@ class Command(BaseCommand):
                             ).delete()
 
         if not dry_run:
+            deletes += self._prune_undiscovered_fields(registry)
+            deletes += self._prune_dangling()
             self._backfill_images()
 
         self._report(dry_run, upserts, deletes)
+
+    def _prune_undiscovered_fields(self, registry) -> int:
+        """Drop auto-tracked rows for fields no longer in the registry.
+
+        Covers renamed/removed ``CloudflareImageField``s (their old usage rows
+        would otherwise keep their images looking in-use forever). Manual rows
+        — ``field_name == MANUAL_FIELD_NAME`` — are deliberately preserved
+        because they were created through the public API, not derived from a
+        host model field.
+        """
+        discovered = {
+            (ContentType.objects.get_for_model(model).pk, field_name)
+            for model, fields in registry.items()
+            for field_name in fields
+        }
+        auto = ImageUsage.objects.exclude(field_name=MANUAL_FIELD_NAME)
+        seen_pairs = auto.values_list("content_type", "field_name").distinct()
+        removed = 0
+        for content_type_id, field_name in seen_pairs:
+            if (content_type_id, field_name) in discovered:
+                continue
+            count, _ = (
+                ImageUsage.objects.filter(
+                    content_type_id=content_type_id, field_name=field_name
+                )
+                .exclude(field_name=MANUAL_FIELD_NAME)
+                .delete()
+            )
+            removed += count
+        return removed
+
+    def _prune_dangling(self) -> int:
+        """Delete usage rows whose owning object no longer exists.
+
+        Covers manually-registered owners and removed models/objects that bypass
+        the post_delete signal, so a deleted owner can't keep an image looking
+        in-use. Grouped by content type to avoid per-row object lookups.
+        """
+        removed = 0
+        content_type_ids = (
+            ImageUsage.objects.values_list("content_type", flat=True)
+            .distinct()
+            .order_by("content_type")
+        )
+        for content_type_id in content_type_ids:
+            content_type = ContentType.objects.get_for_id(content_type_id)
+            rows = ImageUsage.objects.filter(content_type=content_type)
+            model = content_type.model_class()
+            if model is None:
+                # The model (or its app) was removed entirely.
+                removed += rows.count()
+                rows.delete()
+                continue
+            existing = {
+                str(pk) for pk in model._base_manager.values_list("pk", flat=True)
+            }
+            stale_pks = [row.pk for row in rows if row.object_id not in existing]
+            if stale_pks:
+                removed += len(stale_pks)
+                ImageUsage.objects.filter(pk__in=stale_pks).delete()
+        return removed
 
     def _backfill_images(self):
         """Link any unlinked usages to a now-existing CloudflareImage record."""

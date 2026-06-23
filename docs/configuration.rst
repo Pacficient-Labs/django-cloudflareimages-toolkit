@@ -146,7 +146,8 @@ The package includes Django admin integration for image management:
    # 2. Search and filter images by various criteria (including an Orphaned filter)
    # 3. A "Used by" panel showing which content references each image
    # 4. View image metadata and variants
-   # 5. Usage-aware delete (refuses images still in use; removes from Django and Cloudflare)
+   # 5. "Used by" panel + Orphaned filter so staff can see usage before deleting
+   #    (usage-aware delete protection is enforced on the REST API, not the admin)
    # 6. Generate new upload URLs
 
 Custom Admin Configuration

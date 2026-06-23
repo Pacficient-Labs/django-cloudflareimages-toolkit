@@ -131,6 +131,15 @@ class TestManualApi:
         register_usage(plain, "cf-manual")
         assert usages_for(plain).count() == 1
 
+    def test_manual_owner_delete_clears_usage(self):
+        # Plain has no CloudflareImageField, so its delete cleanup is wired by
+        # register_usage rather than apps.ready().
+        plain = Plain.objects.create(name="x")
+        register_usage(plain, "cf-manual")
+        assert usages_for(plain).count() == 1
+        plain.delete()
+        assert usages_for(plain).count() == 0
+
 
 @pytest.mark.django_db
 class TestReconcile:
@@ -166,6 +175,46 @@ class TestReconcile:
         Product.objects.bulk_create([Product(image="cf-bulk")])
         call_command("reconcile_image_usage", "--dry-run")
         assert ImageUsage.objects.count() == 0
+
+    def test_prunes_dangling_rows(self):
+        # A usage row whose owning object no longer exists (e.g. owner deleted
+        # via a signal-bypassing path) is pruned by reconcile.
+        ct = ContentType.objects.get_for_model(Plain)
+        ImageUsage.objects.create(
+            content_type=ct,
+            object_id="999999",
+            field_name="manual",
+            cloudflare_id="cf-x",
+        )
+        assert ImageUsage.objects.count() == 1
+        call_command("reconcile_image_usage")
+        assert ImageUsage.objects.count() == 0
+
+    def test_reconcile_prunes_undiscovered_field_rows(self):
+        # A row created against a now-renamed/removed CloudflareImageField is
+        # pruned (its (content_type, field_name) pair isn't in the registry),
+        # while a manual row on the same object survives.
+        product = Product.objects.create(image="cf-current")
+        ct = ContentType.objects.get_for_model(Product)
+        ImageUsage.objects.create(
+            content_type=ct,
+            object_id=str(product.pk),
+            field_name="obsolete_field",
+            cloudflare_id="cf-obsolete",
+        )
+        ImageUsage.objects.create(
+            content_type=ct,
+            object_id=str(product.pk),
+            field_name="manual",
+            cloudflare_id="cf-manual",
+        )
+
+        call_command("reconcile_image_usage")
+
+        fields = set(usages_for(product).values_list("field_name", flat=True))
+        # "image" (current discovered field) + "manual" (preserved) remain;
+        # "obsolete_field" is dropped.
+        assert fields == {"image", "manual"}
 
     def test_idempotent_and_deterministic(self):
         Product.objects.create(image="cf-1")
@@ -219,3 +268,22 @@ class TestOrphanDetection:
 
         call_command("cleanup_expired_images", "--delete-orphans", "--orphan-days", "0")
         assert CloudflareImage.objects.filter(cloudflare_id="cf-used").exists()
+
+
+@pytest.mark.django_db(databases=["default", "other"])
+class TestMultiDatabase:
+    def test_signal_records_on_non_default_db(self):
+        # Saving on "other" must record the ImageUsage row on "other" only.
+        product = Product(image="cf-multidb")
+        product.save(using="other")
+
+        assert ImageUsage.objects.using("other").filter(cloudflare_id="cf-multidb").count() == 1
+        assert ImageUsage.objects.using("default").filter(cloudflare_id="cf-multidb").count() == 0
+
+    def test_delete_clears_on_correct_db(self):
+        product = Product(image="cf-multidb")
+        product.save(using="other")
+        assert ImageUsage.objects.using("other").count() == 1
+
+        product.delete(using="other")
+        assert ImageUsage.objects.using("other").count() == 0

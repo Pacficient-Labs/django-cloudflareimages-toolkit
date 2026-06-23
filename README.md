@@ -617,11 +617,15 @@ CloudflareImage.objects.filter(usages__isnull=True)         # orphans (unused)
 ImageUsage.objects.filter(image__isnull=True)               # referenced but unregistered
 ```
 
-**Admin gallery & safety.** The admin image list gains a thumbnail **gallery
-view** (with table toggle), status/orphan/usage badges, a "Used by" panel linking
-to the referencing objects, and Orphaned/Unregistered filters. API and admin
-deletes are **usage-aware** — they refuse to delete an image still in use unless
-forced.
+**Admin gallery.** The admin image list gains a thumbnail **gallery view** (with
+table toggle), status/orphan/usage badges, a "Used by" panel linking to the
+referencing objects, and Orphaned/Unregistered filters so staff can see at a
+glance what each image is used by.
+
+**Usage-aware deletes (API).** The REST API delete endpoints refuse to delete an
+image still referenced by content (HTTP 409) unless `force=true`. The admin's
+existing delete actions are not guarded — staff are trusted to consult the
+"Used by" panel before deleting.
 
 > Bulk operations bypass signals; run `python manage.py reconcile_image_usage`
 > to rebuild the registry (it is idempotent).
