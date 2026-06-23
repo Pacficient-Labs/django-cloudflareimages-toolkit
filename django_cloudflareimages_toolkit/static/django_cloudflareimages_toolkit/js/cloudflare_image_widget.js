@@ -61,7 +61,9 @@
     if (!previewEl) {
       return;
     }
-    previewEl.innerHTML = "";
+    // replaceChildren() (not innerHTML) so we never parse a string as HTML —
+    // the preview is built from a created element with a controlled src.
+    previewEl.replaceChildren();
     if (!url) {
       return;
     }
@@ -85,7 +87,7 @@
         ctx.progressEl.style.display = "block";
       }
       if (ctx.previewEl) {
-        ctx.previewEl.innerHTML = "";
+        ctx.previewEl.replaceChildren();
       }
 
       const urlResponse = await fetch(config.api_endpoint, {

@@ -20,7 +20,6 @@ The upload endpoint is resolved from its named route
 source of truth for that URL is its ``path()`` definition (see issue #22).
 """
 
-import json
 from typing import Any
 
 from django import forms
@@ -140,10 +139,14 @@ class CloudflareImageWidget(forms.TextInput):
                 "preview_id": f"{field_id}_preview",
                 "progress_id": f"{field_id}_progress",
                 "config_id": f"{field_id}_config",
+                # The config is emitted to the page exclusively via Django's
+                # ``json_script`` (in the template and the fallback), which
+                # escapes ``<``/``>``/``&`` so metadata can't break out of the
+                # <script> block. We intentionally do NOT expose a
+                # ``mark_safe(json.dumps(...))`` string here: that pattern does
+                # not escape those characters and is an XSS footgun if a template
+                # drops it into a <script> tag.
                 "config": config,
-                # Sorted for deterministic output (issue #24). Retained for any
-                # template that wants the raw JSON inline.
-                "config_json": mark_safe(json.dumps(config, sort_keys=True)),
                 # Individual values exposed for template convenience.
                 "variants": self.variants,
                 "metadata": self.metadata,

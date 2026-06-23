@@ -55,6 +55,19 @@ def test_render_uses_template_and_embeds_config():
     assert config["allowed_formats"] == ["jpeg", "png", "gif", "webp"]
 
 
+def test_render_escapes_unsafe_metadata_via_json_script():
+    """Metadata is emitted XSS-safe via json_script, not a mark_safe footgun.
+
+    json_script escapes ``<``/``>``/``&``, so metadata can't break out of the
+    ``<script type="application/json">`` config block. (The old
+    ``mark_safe(json.dumps(...))`` context var, which did NOT escape those
+    characters, was removed.)
+    """
+    html = CloudflareImageWidget(metadata={"x": "<xss>"}).render("photo", None)
+    assert "<xss>" not in html  # never injected raw
+    assert "\\u003Cxss\\u003E" in html  # json_script-escaped form
+
+
 def test_render_has_no_inline_upload_javascript():
     """The behaviour comes from the static JS, not inline reimplementation."""
     html = CloudflareImageWidget().render("photo", None)

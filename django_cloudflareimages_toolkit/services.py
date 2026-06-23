@@ -39,6 +39,13 @@ logger = logging.getLogger(__name__)
 class CloudflareImagesService:
     """Service class for Cloudflare Images API operations."""
 
+    # Default per-request timeout (seconds) applied to every Cloudflare API
+    # call. Without it a stalled connection could hang the worker thread
+    # indefinitely; this bounds each request so a network blip surfaces as a
+    # CloudflareImagesError instead of a hung request. Callers may override per
+    # call by passing ``timeout=`` through to ``_request``.
+    REQUEST_TIMEOUT = 30
+
     def __init__(self):
         # Each thread gets its own Session so there is no shared mutable state
         # (e.g. cookies, adapters) between concurrent callers.
@@ -124,6 +131,9 @@ class CloudflareImagesService:
                 ``success: false`` envelope.
         """
         headers = {**self._auth_headers(), **kwargs.pop("headers", {})}
+        # Bound every request so a stalled connection can't hang the thread
+        # forever (a timeout surfaces as a CloudflareImagesError below).
+        kwargs.setdefault("timeout", self.REQUEST_TIMEOUT)
         try:
             response = getattr(self.session, method)(url, headers=headers, **kwargs)
             response.raise_for_status()
