@@ -239,7 +239,10 @@ class CloudflareImageViewSet(ModelViewSet):
                 "usage_count": usage_count,
             }
 
-        cloudflare_service.delete_image(image)
+        # missing_ok=True: if Cloudflare already returned 404 (image gone),
+        # treat it as deleted and still remove the local row so repeated/partial
+        # deletes converge instead of failing with "not found".
+        cloudflare_service.delete_image(image, missing_ok=True)
         detail = {
             "id": str(image.id),
             "cloudflare_id": image.cloudflare_id,

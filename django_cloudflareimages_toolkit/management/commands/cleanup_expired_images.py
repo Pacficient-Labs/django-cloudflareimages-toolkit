@@ -173,7 +173,11 @@ class Command(BaseCommand):
         errors = 0
         for image in orphans:
             try:
-                cloudflare_service.delete_image(image)
+                # missing_ok=True: an image already absent in Cloudflare (404)
+                # counts as deleted, so the local row is still removed and a
+                # re-run after a partial failure converges instead of looping
+                # on the same error forever.
+                cloudflare_service.delete_image(image, missing_ok=True)
                 image.delete()
                 deleted += 1
             except CloudflareImagesError:

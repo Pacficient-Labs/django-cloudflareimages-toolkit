@@ -206,10 +206,25 @@ class CloudflareImageTransform:
         return self
 
     def _build_options_string(self) -> str:
-        """Build comma-separated options string for Cloudflare URLs."""
+        """Build comma-separated options string for Cloudflare URLs.
+
+        Options are emitted in canonical (alphabetical by key) order rather
+        than builder call order. Without this, ``.width(300).height(200)`` and
+        ``.height(200).width(300)`` would serialize to different option strings
+        for an identical render, which:
+
+          * fragments the CDN cache (Cloudflare treats the two URLs as distinct
+            objects, halving the hit rate for the same image), and
+          * makes output non-reproducible/hard to assert on or dedupe.
+
+        Cloudflare parses options order-independently, so sorting is purely a
+        serialization detail with no effect on the rendered image.
+        """
         if not self.transforms:
             return ""
-        return ",".join(f"{key}={value}" for key, value in self.transforms.items())
+        return ",".join(
+            f"{key}={value}" for key, value in sorted(self.transforms.items())
+        )
 
     def build(self) -> str:
         """

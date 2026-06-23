@@ -1,24 +1,51 @@
 """
 Django form widgets for Cloudflare Images integration.
 
-This module provides custom form widgets for handling image uploads
-with Cloudflare Images, including JavaScript-based upload functionality.
+This module provides a custom form widget for handling image uploads with
+Cloudflare Images. The upload behaviour -- HTML structure, JavaScript, and
+styling -- lives in the package's template and static assets, NOT inline in
+Python:
+
+  * template: ``templates/django_cloudflareimages_toolkit/widgets/cloudflare_image_widget.html``
+  * script:   ``static/django_cloudflareimages_toolkit/js/cloudflare_image_widget.js``
+  * styles:   ``static/django_cloudflareimages_toolkit/css/cloudflare_image_widget.css``
+
+The widget's only responsibility here is to assemble the per-field ``config``
+payload **once** (:meth:`CloudflareImageWidget.get_context` /
+:meth:`_build_config`) and hand it to the template (and to an equivalent
+minimal fallback), so the markup and the script can never drift apart.
+
+The upload endpoint is resolved from its named route
+(``cloudflare_images:create-upload-url``) rather than hardcoded, so the single
+source of truth for that URL is its ``path()`` definition (see issue #22).
 """
 
-import json
 from typing import Any
 
 from django import forms
 from django.forms.renderers import get_default_renderer
+from django.template import TemplateDoesNotExist
+from django.urls import NoReverseMatch, reverse
+from django.utils.html import format_html, json_script
 from django.utils.safestring import SafeText, mark_safe
+
+from .constants import DEFAULT_ALLOWED_FORMATS
+
+# Named route (see ``urls.py``: ``app_name = "cloudflare_images"``) that issues a
+# direct creator upload URL. Resolved at render time so the widget always posts
+# to the real endpoint and remounting/renaming the URL propagates automatically.
+UPLOAD_URL_NAME = "cloudflare_images:create-upload-url"
 
 
 class CloudflareImageWidget(forms.TextInput):
     """
     A widget for handling Cloudflare image uploads.
 
-    This widget provides a file input interface that handles direct uploads
-    to Cloudflare Images and stores the resulting image ID in the form field.
+    This widget renders a hidden input (which stores the Cloudflare image id)
+    alongside a file input that drives the direct-upload flow implemented in the
+    accompanying static JavaScript. The behaviour is loaded via the widget's
+    :class:`Media`; this class only builds the configuration the template and
+    script consume.
     """
 
     template_name = (
@@ -49,7 +76,9 @@ class CloudflareImageWidget(forms.TextInput):
         self.metadata = metadata or {}
         self.require_signed_urls = require_signed_urls
         self.max_file_size = max_file_size
-        self.allowed_formats = allowed_formats or ["jpeg", "png", "gif", "webp"]
+        # Copy the shared default so the constant is never mutated through a
+        # widget instance (and instances don't accidentally share one list).
+        self.allowed_formats = allowed_formats or list(DEFAULT_ALLOWED_FORMATS)
 
         default_attrs = {"type": "hidden", "class": "cloudflare-image-field"}
         if attrs:
@@ -63,278 +92,127 @@ class CloudflareImageWidget(forms.TextInput):
             return ""
         return str(value)
 
-    def render(
-        self, name: str, value: Any, attrs: dict[str, Any] | None = None, renderer=None
-    ) -> SafeText:
+    def _resolve_upload_endpoint(self) -> str:
+        """Resolve the upload endpoint from its named route (SSOT).
+
+        Returns an empty string when the API URLs aren't mounted
+        (``NoReverseMatch``); the JS then surfaces a clear "endpoint not
+        configured" error rather than POSTing to a wrong/dead path.
         """
-        Render the widget HTML.
+        try:
+            return reverse(UPLOAD_URL_NAME)
+        except NoReverseMatch:
+            return ""
 
-        Args:
-            name: Field name
-            value: Current field value
-            attrs: HTML attributes
-            renderer: Template renderer
+    def _build_config(self) -> dict[str, Any]:
+        """Assemble the single ``config`` payload shared by template and JS.
 
-        Returns:
-            Rendered HTML string
+        This is the one place the widget's runtime configuration is built, so
+        :meth:`render` and :meth:`_render_fallback` can never serialize a
+        different payload.
         """
-        if renderer is None:
-            renderer = get_default_renderer()
+        return {
+            "variants": self.variants,
+            "metadata": self.metadata,
+            "require_signed_urls": self.require_signed_urls,
+            "max_file_size": self.max_file_size,
+            "allowed_formats": self.allowed_formats,
+            "api_endpoint": self._resolve_upload_endpoint(),
+        }
 
-        context = self.get_context(name, value, attrs)
-        context["widget"].update(
+    def get_context(
+        self, name: str, value: Any, attrs: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Build the template context, assembling the config payload once."""
+        context = super().get_context(name, value, attrs)
+        widget = context["widget"]
+
+        # The form supplies an ``id`` for the hidden input; fall back to Django's
+        # conventional ``id_<name>`` so the derived element ids are stable.
+        field_id = widget["attrs"].get("id") or f"id_{name}"
+        config = self._build_config()
+
+        widget.update(
             {
+                "field_id": field_id,
+                "upload_id": f"{field_id}_upload",
+                "preview_id": f"{field_id}_preview",
+                "progress_id": f"{field_id}_progress",
+                "config_id": f"{field_id}_config",
+                # The config is emitted to the page exclusively via Django's
+                # ``json_script`` (in the template and the fallback), which
+                # escapes ``<``/``>``/``&`` so metadata can't break out of the
+                # <script> block. We intentionally do NOT expose a
+                # ``mark_safe(json.dumps(...))`` string here: that pattern does
+                # not escape those characters and is an XSS footgun if a template
+                # drops it into a <script> tag.
+                "config": config,
+                # Individual values exposed for template convenience.
                 "variants": self.variants,
                 "metadata": self.metadata,
                 "require_signed_urls": self.require_signed_urls,
                 "max_file_size": self.max_file_size,
                 "allowed_formats": self.allowed_formats,
-                "config_json": mark_safe(
-                    json.dumps(
-                        {
-                            "variants": self.variants,
-                            "metadata": self.metadata,
-                            "require_signed_urls": self.require_signed_urls,
-                            "max_file_size": self.max_file_size,
-                            "allowed_formats": self.allowed_formats,
-                        }
-                    )
-                ),
+                "api_endpoint": config["api_endpoint"],
             }
         )
+        return context
 
-        # Fallback HTML if template is not found
-        try:
-            return renderer.render(self.template_name, context)
-        except Exception:
-            return self._render_fallback(name, value, attrs)
-
-    def _render_fallback(
-        self, name: str, value: Any, attrs: dict[str, Any] | None = None
+    def render(
+        self, name: str, value: Any, attrs: dict[str, Any] | None = None, renderer=None
     ) -> SafeText:
         """
-        Render fallback HTML when template is not available.
+        Render the widget HTML from the template.
 
-        Args:
-            name: Field name
-            value: Current field value
-            attrs: HTML attributes
-
-        Returns:
-            Fallback HTML string
+        Falls back to a minimal, equivalent markup block only if the package's
+        templates aren't reachable on the loader path.
         """
-        if attrs is None:
-            attrs = {}
+        if renderer is None:
+            renderer = get_default_renderer()
 
-        # Merge widget attrs
-        final_attrs = self.build_attrs(attrs)
+        context = self.get_context(name, value, attrs)
+        try:
+            return mark_safe(renderer.render(self.template_name, context))
+        except TemplateDoesNotExist:
+            return self._render_fallback(context)
 
-        # Create unique IDs for elements
-        field_id = final_attrs.get("id", f"id_{name}")
-        upload_id = f"{field_id}_upload"
-        preview_id = f"{field_id}_preview"
-        progress_id = f"{field_id}_progress"
+    def _render_fallback(self, context: dict[str, Any]) -> SafeText:
+        """
+        Minimal fallback used only when the widget template can't be loaded.
 
-        # Build the HTML
-        html_parts = [
-            # Hidden input for storing the image ID
-            f'<input type="hidden" name="{name}" id="{field_id}" value="{self.format_value(value)}" />',
-            # File input for selecting images
-            '<div class="cloudflare-image-upload-container">',
-            f'  <input type="file" id="{upload_id}" accept="image/*" class="cloudflare-image-upload" />',
-            f'  <div id="{preview_id}" class="cloudflare-image-preview"></div>',
-            f'  <div id="{progress_id}" class="cloudflare-image-progress" style="display: none;">',
-            '    <div class="progress-bar"></div>',
-            '    <span class="progress-text">Uploading...</span>',
-            "  </div>",
-            "</div>",
-            # JavaScript for handling uploads
-            "<script>",
-            "(function() {",
-            f"  const config = {json.dumps({'variants': self.variants, 'metadata': self.metadata, 'require_signed_urls': self.require_signed_urls, 'max_file_size': self.max_file_size, 'allowed_formats': self.allowed_formats})};",
-            f'  const fieldId = "{field_id}";',
-            f'  const uploadId = "{upload_id}";',
-            f'  const previewId = "{preview_id}";',
-            f'  const progressId = "{progress_id}";',
-            "  ",
-            "  // Initialize the upload handler when DOM is ready",
-            '  if (document.readyState === "loading") {',
-            '    document.addEventListener("DOMContentLoaded", initUploadHandler);',
-            "  } else {",
-            "    initUploadHandler();",
-            "  }",
-            "  ",
-            "  function initUploadHandler() {",
-            "    const uploadInput = document.getElementById(uploadId);",
-            "    const hiddenInput = document.getElementById(fieldId);",
-            "    const previewDiv = document.getElementById(previewId);",
-            "    const progressDiv = document.getElementById(progressId);",
-            "    ",
-            "    if (!uploadInput) return;",
-            "    ",
-            '    uploadInput.addEventListener("change", handleFileSelect);',
-            "    ",
-            "    // Show current image if value exists",
-            "    if (hiddenInput.value) {",
-            "      showImagePreview(hiddenInput.value);",
-            "    }",
-            "  }",
-            "  ",
-            "  function handleFileSelect(event) {",
-            "    const file = event.target.files[0];",
-            "    if (!file) return;",
-            "    ",
-            "    // Validate file",
-            "    if (!validateFile(file)) return;",
-            "    ",
-            "    // Start upload",
-            "    uploadFile(file);",
-            "  }",
-            "  ",
-            "  function validateFile(file) {",
-            "    const maxSize = config.max_file_size;",
-            "    const allowedFormats = config.allowed_formats;",
-            "    ",
-            "    if (maxSize && file.size > maxSize) {",
-            '      alert("File size exceeds maximum allowed size");',
-            "      return false;",
-            "    }",
-            "    ",
-            '    const fileType = file.type.split("/")[1];',
-            "    if (allowedFormats.length && !allowedFormats.includes(fileType)) {",
-            '      alert("File format not allowed");',
-            "      return false;",
-            "    }",
-            "    ",
-            "    return true;",
-            "  }",
-            "  ",
-            "  async function uploadFile(file) {",
-            "    const progressDiv = document.getElementById(progressId);",
-            "    const previewDiv = document.getElementById(previewId);",
-            "    const hiddenInput = document.getElementById(fieldId);",
-            "    ",
-            "    try {",
-            "      // Show progress",
-            '      progressDiv.style.display = "block";',
-            '      previewDiv.innerHTML = "";',
-            "      ",
-            "      // Get upload URL from Django backend",
-            '      const uploadUrlResponse = await fetch("/cloudflare-images/get-upload-url/", {',
-            '        method: "POST",',
-            "        headers: {",
-            '          "Content-Type": "application/json",',
-            '          "X-CSRFToken": getCsrfToken()',
-            "        },",
-            "        body: JSON.stringify({",
-            "          metadata: config.metadata,",
-            "          require_signed_urls: config.require_signed_urls",
-            "        })",
-            "      });",
-            "      ",
-            "      if (!uploadUrlResponse.ok) {",
-            '        throw new Error("Failed to get upload URL");',
-            "      }",
-            "      ",
-            "      const uploadData = await uploadUrlResponse.json();",
-            "      ",
-            "      // Upload file to Cloudflare",
-            "      const formData = new FormData();",
-            '      formData.append("file", file);',
-            "      ",
-            "      const uploadResponse = await fetch(uploadData.uploadURL, {",
-            '        method: "POST",',
-            "        body: formData",
-            "      });",
-            "      ",
-            "      if (!uploadResponse.ok) {",
-            '        throw new Error("Upload failed");',
-            "      }",
-            "      ",
-            "      const result = await uploadResponse.json();",
-            "      ",
-            "      // Update hidden input with image ID",
-            "      hiddenInput.value = result.result.id;",
-            "      ",
-            "      // Show preview",
-            "      showImagePreview(result.result.id);",
-            "      ",
-            "      // Hide progress",
-            '      progressDiv.style.display = "none";',
-            "      ",
-            "    } catch (error) {",
-            '      console.error("Upload error:", error);',
-            '      alert("Upload failed: " + error.message);',
-            '      progressDiv.style.display = "none";',
-            "    }",
-            "  }",
-            "  ",
-            "  function showImagePreview(imageId) {",
-            "    const previewDiv = document.getElementById(previewId);",
-            "    if (!imageId) return;",
-            "    ",
-            "    // Create preview image (you may need to adjust the URL format)",
-            '    const img = document.createElement("img");',
-            '    img.src = "/cloudflare-images/image/" + imageId + "/thumbnail/";',
-            '    img.style.maxWidth = "200px";',
-            '    img.style.maxHeight = "200px";',
-            '    img.alt = "Image preview";',
-            "    ",
-            '    previewDiv.innerHTML = "";',
-            "    previewDiv.appendChild(img);",
-            "  }",
-            "  ",
-            "  function getCsrfToken() {",
-            '    const cookies = document.cookie.split(";");',
-            "    for (let cookie of cookies) {",
-            '      const [name, value] = cookie.trim().split("=");',
-            '      if (name === "csrftoken") {',
-            "        return value;",
-            "      }",
-            "    }",
-            '    return "";',
-            "  }",
-            "})();",
-            "</script>",
-            # Basic CSS for styling
-            "<style>",
-            ".cloudflare-image-upload-container {",
-            "  border: 2px dashed #ccc;",
-            "  border-radius: 4px;",
-            "  padding: 20px;",
-            "  text-align: center;",
-            "  margin: 10px 0;",
-            "}",
-            ".cloudflare-image-preview img {",
-            "  border-radius: 4px;",
-            "  box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
-            "}",
-            ".cloudflare-image-progress {",
-            "  margin-top: 10px;",
-            "}",
-            ".progress-bar {",
-            "  width: 100%;",
-            "  height: 4px;",
-            "  background: #f0f0f0;",
-            "  border-radius: 2px;",
-            "  overflow: hidden;",
-            "}",
-            ".progress-bar::after {",
-            '  content: "";',
-            "  display: block;",
-            "  width: 100%;",
-            "  height: 100%;",
-            "  background: #007cba;",
-            "  animation: progress 2s infinite;",
-            "}",
-            "@keyframes progress {",
-            "  0% { transform: translateX(-100%); }",
-            "  100% { transform: translateX(100%); }",
-            "}",
-            "</style>",
-        ]
+        It renders the hidden field, the file input, and the same json_script
+        config block, then relies on the static JS (declared in :class:`Media`)
+        for behaviour. It deliberately does NOT re-implement the upload flow or
+        inline any JavaScript/CSS -- that lives in the static assets, defined
+        once.
+        """
+        widget = context["widget"]
+        # json_script safely serializes + HTML-escapes the config into a
+        # <script type="application/json"> block the static JS reads, exactly as
+        # the template's ``|json_script`` filter does.
+        config_script = json_script(widget["config"], widget["config_id"])
 
-        return mark_safe("".join(html_parts))
+        return format_html(
+            '<div class="cloudflare-image-upload-container" '
+            'data-cfimg-field="{field_id}">'
+            '<input type="hidden" name="{name}" id="{field_id}" value="{value}" '
+            'class="cloudflare-image-field">'
+            '<input type="file" id="{upload_id}" accept="image/*" '
+            'class="cloudflare-image-upload">'
+            '<div id="{preview_id}" class="cloudflare-image-preview"></div>'
+            '<div id="{progress_id}" class="cloudflare-image-progress" '
+            'style="display: none;">'
+            '<div class="progress-bar"></div>'
+            '<span class="progress-text">Uploading…</span>'
+            "</div>{config_script}</div>",
+            field_id=widget["field_id"],
+            name=widget["name"],
+            value=widget["value"],
+            upload_id=widget["upload_id"],
+            preview_id=widget["preview_id"],
+            progress_id=widget["progress_id"],
+            config_script=config_script,
+        )
 
     class Media:
         """Define media files for the widget."""

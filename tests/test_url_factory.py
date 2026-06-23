@@ -255,10 +255,12 @@ class TransformationsIntegrationTest(TestCase):
             f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/public"
         )
         url = CloudflareImageTransform(base).width(300).height(200).build()
+        # Options are emitted in canonical (alphabetical) order regardless of
+        # builder call order (issue #24), so height precedes width here.
         self.assertEqual(
             url,
             "https://images.example.com/cdn-cgi/imagedelivery/"
-            f"{HASH}/{IMAGE_ID}/width=300,height=200",
+            f"{HASH}/{IMAGE_ID}/height=200,width=300",
         )
 
     @cf_settings(**WORKER)

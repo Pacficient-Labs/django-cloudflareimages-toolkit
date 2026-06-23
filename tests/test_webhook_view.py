@@ -142,3 +142,87 @@ class TestWebhookPayloadValidation:
             content_type="application/json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+class TestWebhookProcessingErrors:
+    """Issue #28: a real processing error must surface as 500 (so Cloudflare
+    retries), while a genuinely unknown image stays a 404 (don't retry).
+
+    Previously ``process_webhook`` wrapped its whole body in
+    ``except Exception: return None``, so a transient failure was reported to
+    Cloudflare as "unknown image" (404) and the view's 500 branch was
+    unreachable. The two must be distinguishable by status code.
+    """
+
+    def test_processing_error_returns_500_not_404(
+        self, client: Client, disabled_secret
+    ):
+        """An unexpected error during processing maps to 500, not 404."""
+        body = json.dumps({"id": "abc123"}).encode()
+        with patch(
+            "django_cloudflareimages_toolkit.services.cloudflare_service.process_webhook",
+            side_effect=RuntimeError("transient db error"),
+        ):
+            response = client.post(
+                WEBHOOK_URL, data=body, content_type="application/json"
+            )
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+    def test_unknown_image_still_returns_404(self, client: Client, disabled_secret):
+        """A valid payload for an image with no local row is a real 404."""
+        # Real processing (no mock): the id matches no CloudflareImage row.
+        body = json.dumps({"id": "no-such-image"}).encode()
+        response = client.post(WEBHOOK_URL, data=body, content_type="application/json")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+class TestProcessWebhookService:
+    """Unit-level coverage of ``process_webhook``'s narrowed error handling."""
+
+    def _make_image(self, cloudflare_id: str):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from django_cloudflareimages_toolkit.models import CloudflareImage
+
+        return CloudflareImage.objects.create(
+            cloudflare_id=cloudflare_id,
+            upload_url="",
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+    def test_missing_id_returns_none(self):
+        from django_cloudflareimages_toolkit.services import cloudflare_service
+
+        assert cloudflare_service.process_webhook({}) is None
+
+    def test_unknown_image_returns_none(self):
+        from django_cloudflareimages_toolkit.services import cloudflare_service
+
+        assert cloudflare_service.process_webhook({"id": "ghost"}) is None
+
+    def test_known_image_processed_returns_instance(self):
+        from django_cloudflareimages_toolkit.services import cloudflare_service
+
+        self._make_image("known-id")
+        result = cloudflare_service.process_webhook({"id": "known-id"})
+        assert result is not None
+        assert result.cloudflare_id == "known-id"
+
+    def test_processing_error_propagates(self, monkeypatch):
+        """A failure updating a *known* image propagates (not swallowed)."""
+        from django_cloudflareimages_toolkit.models import CloudflareImage
+        from django_cloudflareimages_toolkit.services import cloudflare_service
+
+        self._make_image("boom-id")
+
+        def explode(self, *args, **kwargs):
+            raise RuntimeError("save failed")
+
+        monkeypatch.setattr(CloudflareImage, "update_from_cloudflare_response", explode)
+
+        with pytest.raises(RuntimeError):
+            cloudflare_service.process_webhook({"id": "boom-id"})

@@ -1,0 +1,28 @@
+{% comment %}
+Cloudflare Images upload widget.
+
+Renders the hidden field that stores the Cloudflare image id, plus a file input
+that drives the direct-creator upload flow. All behaviour lives in the static
+asset django_cloudflareimages_toolkit/js/cloudflare_image_widget.js (loaded via
+the widget's Media), and the styling in the matching .css file -- this template
+deliberately contains no inline JavaScript or CSS.
+
+The per-field configuration (variants, metadata, limits, and the upload
+endpoint resolved server-side from the named route cloudflare_images:create-upload-url)
+is emitted once as a json_script block. The script reads it from there, so the
+markup and the behaviour share a single config and cannot drift apart.
+
+Context is assembled in CloudflareImageWidget.get_context (widgets.py).
+{% endcomment %}
+<div class="cloudflare-image-upload-container" data-cfimg-field="{{ widget.field_id }}">
+  <input type="hidden" name="{{ widget.name }}" id="{{ widget.field_id }}"
+         value="{{ widget.value }}" class="cloudflare-image-field">
+  <input type="file" id="{{ widget.upload_id }}" accept="image/*"
+         class="cloudflare-image-upload">
+  <div id="{{ widget.preview_id }}" class="cloudflare-image-preview"></div>
+  <div id="{{ widget.progress_id }}" class="cloudflare-image-progress" style="display: none;">
+    <div class="progress-bar"></div>
+    <span class="progress-text">Uploading&hellip;</span>
+  </div>
+  {{ widget.config|json_script:widget.config_id }}
+</div>

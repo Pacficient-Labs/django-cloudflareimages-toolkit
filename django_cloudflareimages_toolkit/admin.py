@@ -355,17 +355,15 @@ class CloudflareImageAdmin(admin.ModelAdmin):
     thumbnail_preview.short_description = "Preview"
 
     def actions_display(self, obj):
-        """Display action buttons."""
-        actions = []
+        """Display action buttons.
 
-        if obj.status in [ImageUploadStatus.PENDING, ImageUploadStatus.DRAFT]:
-            actions.append(
-                format_html(
-                    '<a href="javascript:void(0)" onclick="checkStatus(\'{}\')" '
-                    'style="color: #007cba; text-decoration: none;">🔄 Check</a>',
-                    obj.pk,
-                )
-            )
+        A per-row "Check status" link used to live here, but it called a
+        client-side ``checkStatus()`` that posted to a non-existent admin route
+        (wrong app label, unregistered URL) and always 404'd. Per-image status
+        checks are available via the bulk "Check status from Cloudflare" action
+        instead, so the dead link was removed (see issue #22).
+        """
+        actions = []
 
         if obj.is_uploaded and obj.public_url:
             actions.append(
@@ -551,7 +549,10 @@ class CloudflareImageAdmin(admin.ModelAdmin):
 
         for image in queryset:
             try:
-                cloudflare_service.delete_image(image)
+                # missing_ok=True so an image already gone from Cloudflare (404)
+                # still has its local row removed — the action converges on
+                # "deleted" rather than re-erroring on every retry.
+                cloudflare_service.delete_image(image, missing_ok=True)
                 image.delete()
                 deleted_count += 1
             except CloudflareImagesError:

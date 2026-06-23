@@ -7,6 +7,7 @@ This module contains the DRF serializers for API endpoints.
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
+from .constants import MAX_EXPIRY_MINUTES, MIN_EXPIRY_MINUTES
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus, ImageUsage
 
 User = get_user_model()
@@ -29,9 +30,12 @@ class ImageUploadRequestSerializer(serializers.Serializer):
     )
     expiry_minutes = serializers.IntegerField(
         required=False,
-        min_value=2,
-        max_value=360,
-        help_text="Minutes until the upload URL expires (2-360 minutes)",
+        min_value=MIN_EXPIRY_MINUTES,
+        max_value=MAX_EXPIRY_MINUTES,
+        help_text=(
+            f"Minutes until the upload URL expires "
+            f"({MIN_EXPIRY_MINUTES}-{MAX_EXPIRY_MINUTES} minutes)"
+        ),
     )
     filename = serializers.CharField(
         max_length=255, required=False, help_text="Original filename for reference"

@@ -14,6 +14,11 @@ from typing import Any
 import requests
 from django.utils import timezone
 
+from .constants import (
+    MAX_EXPIRY_MINUTES,
+    MAX_LIST_PER_PAGE,
+    MIN_EXPIRY_MINUTES,
+)
 from .exceptions import (
     CloudflareImagesError,
     ImageNotFoundError,
@@ -33,6 +38,13 @@ logger = logging.getLogger(__name__)
 
 class CloudflareImagesService:
     """Service class for Cloudflare Images API operations."""
+
+    # Default per-request timeout (seconds) applied to every Cloudflare API
+    # call. Without it a stalled connection could hang the worker thread
+    # indefinitely; this bounds each request so a network blip surfaces as a
+    # CloudflareImagesError instead of a hung request. Callers may override per
+    # call by passing ``timeout=`` through to ``_request``.
+    REQUEST_TIMEOUT = 30
 
     def __init__(self):
         # Each thread gets its own Session so there is no shared mutable state
@@ -69,6 +81,80 @@ class CloudflareImagesService:
         override_settings changes and avoids mutating shared session state.
         """
         return {"Authorization": f"Bearer {self.api_token}"}
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        error_prefix: str,
+        not_found_message: str | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Perform a Cloudflare API call and return the parsed JSON envelope.
+
+        Centralizes the request/response scaffolding that every public method
+        otherwise repeats:
+
+          * injects the per-request ``Authorization`` header,
+          * raises for HTTP status,
+          * parses the JSON body,
+          * enforces Cloudflare's ``success``/``errors`` envelope (joining the
+            returned error messages), and
+          * maps a ``requests.RequestException`` to ``CloudflareImagesError``.
+
+        Each public method then reduces to request-shaping plus handling of the
+        parsed result, so a change to error context, retries, or timeouts is
+        made here once instead of in ~6 copies.
+
+        Args:
+            method: ``requests.Session`` method name (``"get"``, ``"post"``,
+                ``"patch"``, ``"delete"`` ...).
+            url: Fully-qualified Cloudflare endpoint.
+            error_prefix: Human prefix for the raised/logged error
+                (e.g. ``"Failed to get image"``).
+            not_found_message: When provided, an HTTP ``404`` is surfaced as the
+                typed :class:`ImageNotFoundError` (carrying this message) instead
+                of a generic error, preserving the 404 specialization used by
+                ``get_image`` and ``delete_image``. When ``None`` a 404 is
+                treated like any other request failure.
+            **kwargs: Forwarded to the session call (``params``, ``json``,
+                ``files`` ...). Any ``headers`` are merged on top of the auth
+                header.
+
+        Returns:
+            The decoded JSON ``dict`` (the full envelope, including ``result``).
+
+        Raises:
+            ImageNotFoundError: HTTP 404 when ``not_found_message`` is set.
+            CloudflareImagesError: Any other transport/HTTP failure, or a
+                ``success: false`` envelope.
+        """
+        headers = {**self._auth_headers(), **kwargs.pop("headers", {})}
+        # Bound every request so a stalled connection can't hang the thread
+        # forever (a timeout surfaces as a CloudflareImagesError below).
+        kwargs.setdefault("timeout", self.REQUEST_TIMEOUT)
+        try:
+            response = getattr(self.session, method)(url, headers=headers, **kwargs)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            if not_found_message is not None and status_code == 404:
+                # A missing image is a distinct, typed error so callers can react
+                # to it specifically. ImageNotFoundError subclasses
+                # CloudflareImagesError, so existing ``except`` blocks still match.
+                logger.warning(not_found_message)
+                raise ImageNotFoundError(not_found_message, status_code=404) from e
+            logger.error(f"{error_prefix}: {str(e)}")
+            raise CloudflareImagesError(f"{error_prefix}: {str(e)}") from e
+
+        data = response.json()
+        if not data.get("success"):
+            error_msg = ", ".join(
+                err.get("message", "Unknown error") for err in data.get("errors", [])
+            )
+            raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
+        return data
 
     def get_direct_upload_url(
         self,
@@ -168,14 +254,20 @@ class CloudflareImagesService:
                     "METADATA_FACTORY must return a dict of metadata"
                 )
 
-        # Calculate expiry time (must be 2 min to 6 hours in the future per API docs)
-        expiry_minutes = max(2, min(expiry_minutes, 360))
+        # Calculate expiry time (must be 2 min to 6 hours in the future per API
+        # docs); clamp to the shared Cloudflare bounds.
+        expiry_minutes = max(
+            MIN_EXPIRY_MINUTES, min(expiry_minutes, MAX_EXPIRY_MINUTES)
+        )
         expires_at = timezone.now() + timedelta(minutes=expiry_minutes)
 
-        # Prepare request data
+        # Prepare request data. ``sort_keys=True`` makes the serialized metadata
+        # deterministic: identical metadata always produces a byte-identical
+        # request body regardless of dict insertion order, which keeps the
+        # outgoing request reproducible and easy to assert on.
         form_data = {
             "requireSignedURLs": str(require_signed_urls).lower(),
-            "metadata": json.dumps(metadata),
+            "metadata": json.dumps(metadata, sort_keys=True),
             "expiry": expires_at.isoformat(),
         }
 
@@ -188,53 +280,38 @@ class CloudflareImagesService:
         # Make API request
         url = f"{self.base_url}/accounts/{self.account_id}/images/v2/direct_upload"
 
-        try:
-            # This endpoint requires multipart/form-data. Using (None, value) tuples
-            # encodes each field as a plain form field (no filename) so the request
-            # matches Cloudflare's expected -F key=value semantics.
-            files = {k: (None, v) for k, v in form_data.items()}
-            response = self.session.post(url, files=files, headers=self._auth_headers())
-            response.raise_for_status()
+        # This endpoint requires multipart/form-data. Using (None, value) tuples
+        # encodes each field as a plain form field (no filename) so the request
+        # matches Cloudflare's expected -F key=value semantics.
+        files = {k: (None, v) for k, v in form_data.items()}
+        data = self._request(
+            "post", url, error_prefix="Failed to create upload URL", files=files
+        )
 
-            data = response.json()
+        result = data["result"]
 
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
+        # Create CloudflareImage record
+        image = CloudflareImage.objects.create(
+            cloudflare_id=result["id"],
+            user=user,
+            upload_url=result["uploadURL"],
+            status=ImageUploadStatus.PENDING,
+            require_signed_urls=require_signed_urls,
+            metadata=metadata,
+            creator=creator or "",
+            expires_at=expires_at,
+        )
 
-            result = data["result"]
+        # Log the creation
+        ImageUploadLog.objects.create(
+            image=image,
+            event_type="upload_url_created",
+            message="Direct upload URL created successfully",
+            data={"response": result},
+        )
 
-            # Create CloudflareImage record
-            image = CloudflareImage.objects.create(
-                cloudflare_id=result["id"],
-                user=user,
-                upload_url=result["uploadURL"],
-                status=ImageUploadStatus.PENDING,
-                require_signed_urls=require_signed_urls,
-                metadata=metadata,
-                creator=creator or "",
-                expires_at=expires_at,
-            )
-
-            # Log the creation
-            ImageUploadLog.objects.create(
-                image=image,
-                event_type="upload_url_created",
-                message="Direct upload URL created successfully",
-                data={"response": result},
-            )
-
-            logger.info(f"Created direct upload URL for image {image.cloudflare_id}")
-            return image
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to create direct upload URL: {str(e)}")
-            raise CloudflareImagesError(f"Failed to create upload URL: {str(e)}") from e
+        logger.info(f"Created direct upload URL for image {image.cloudflare_id}")
+        return image
 
     def check_image_status(self, image: CloudflareImage) -> dict[str, Any]:
         """
@@ -251,46 +328,22 @@ class CloudflareImagesService:
         """
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image.cloudflare_id}"
 
-        try:
-            response = self.session.get(url, headers=self._auth_headers())
-            response.raise_for_status()
+        data = self._request("get", url, error_prefix="Failed to check image status")
+        result = data["result"]
 
-            data = response.json()
+        # Update the image record
+        image.update_from_cloudflare_response(result)
 
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
+        # Log the status check
+        ImageUploadLog.objects.create(
+            image=image,
+            event_type="status_checked",
+            message=f"Image status checked: {image.status}",
+            data={"response": result},
+        )
 
-            result = data["result"]
-
-            # Update the image record
-            image.update_from_cloudflare_response(result)
-
-            # Log the status check
-            ImageUploadLog.objects.create(
-                image=image,
-                event_type="status_checked",
-                message=f"Image status checked: {image.status}",
-                data={"response": result},
-            )
-
-            logger.info(
-                f"Checked status for image {image.cloudflare_id}: {image.status}"
-            )
-            return result
-
-        except requests.RequestException as e:
-            logger.error(
-                f"Failed to check image status for {image.cloudflare_id}: {str(e)}"
-            )
-            raise CloudflareImagesError(
-                f"Failed to check image status: {str(e)}"
-            ) from e
+        logger.info(f"Checked status for image {image.cloudflare_id}: {image.status}")
+        return result
 
     def list_images(self, page: int = 1, per_page: int = 1000) -> dict[str, Any]:
         """
@@ -298,7 +351,8 @@ class CloudflareImagesService:
 
         Args:
             page: Page number for pagination (default: 1)
-            per_page: Number of images per page (default: 1000, max: 10000)
+            per_page: Number of images per page (default: 1000; clamped to the
+                Cloudflare maximum, ``MAX_LIST_PER_PAGE``)
 
         Returns:
             Dictionary with pagination info and list of images
@@ -309,32 +363,14 @@ class CloudflareImagesService:
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1"
         params = {
             "page": page,
-            "per_page": min(per_page, 10000),  # Cloudflare max is 10000
+            "per_page": min(per_page, MAX_LIST_PER_PAGE),  # Cloudflare max
         }
 
-        try:
-            response = self.session.get(
-                url, params=params, headers=self._auth_headers()
-            )
-            response.raise_for_status()
-
-            data = response.json()
-
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
-
-            logger.info(f"Listed images: page {page}, per_page {per_page}")
-            return data
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to list images: {str(e)}")
-            raise CloudflareImagesError(f"Failed to list images: {str(e)}") from e
+        data = self._request(
+            "get", url, error_prefix="Failed to list images", params=params
+        )
+        logger.info(f"Listed images: page {page}, per_page {per_page}")
+        return data
 
     def get_image(self, image_id: str) -> dict[str, Any]:
         """
@@ -351,37 +387,16 @@ class CloudflareImagesService:
         """
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image_id}"
 
-        try:
-            response = self.session.get(url, headers=self._auth_headers())
-            response.raise_for_status()
-
-            data = response.json()
-
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
-
-            logger.info(f"Retrieved image details for {image_id}")
-            return data
-
-        except requests.RequestException as e:
-            status_code = getattr(getattr(e, "response", None), "status_code", None)
-            if status_code == 404:
-                # A missing image is a distinct, typed error so callers can
-                # react to it specifically. ImageNotFoundError subclasses
-                # CloudflareImagesError, so existing ``except`` blocks still match.
-                logger.warning(f"Image {image_id} not found in Cloudflare")
-                raise ImageNotFoundError(
-                    f"Image {image_id} not found in Cloudflare",
-                    status_code=404,
-                ) from e
-            logger.error(f"Failed to get image {image_id}: {str(e)}")
-            raise CloudflareImagesError(f"Failed to get image: {str(e)}") from e
+        # A 404 is surfaced as the typed ImageNotFoundError (see _request) so
+        # callers like register_uploaded_image can react to a missing image.
+        data = self._request(
+            "get",
+            url,
+            error_prefix="Failed to get image",
+            not_found_message=f"Image {image_id} not found in Cloudflare",
+        )
+        logger.info(f"Retrieved image details for {image_id}")
+        return data
 
     def register_uploaded_image(
         self, cloudflare_id: str, user=None, expected_creator: str | None = None
@@ -542,85 +557,85 @@ class CloudflareImagesService:
         if require_signed_urls is not None:
             update_data["requireSignedURLs"] = require_signed_urls
 
+        data = self._request(
+            "patch", url, error_prefix="Failed to update image", json=update_data
+        )
+
+        # Update local CloudflareImage if it exists
         try:
-            response = self.session.patch(
-                url, json=update_data, headers=self._auth_headers()
-            )
-            response.raise_for_status()
+            image = CloudflareImage.objects.get(cloudflare_id=image_id)
+            if metadata is not None:
+                image.metadata.update(metadata)
+            if require_signed_urls is not None:
+                image.require_signed_urls = require_signed_urls
+            image.save()
+        except CloudflareImage.DoesNotExist:
+            pass
 
-            data = response.json()
+        logger.info(f"Updated image {image_id}")
+        return data
 
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
-
-            # Update local CloudflareImage if it exists
-            try:
-                image = CloudflareImage.objects.get(cloudflare_id=image_id)
-                if metadata is not None:
-                    image.metadata.update(metadata)
-                if require_signed_urls is not None:
-                    image.require_signed_urls = require_signed_urls
-                image.save()
-            except CloudflareImage.DoesNotExist:
-                pass
-
-            logger.info(f"Updated image {image_id}")
-            return data
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to update image {image_id}: {str(e)}")
-            raise CloudflareImagesError(f"Failed to update image: {str(e)}") from e
-
-    def delete_image(self, image: CloudflareImage) -> bool:
+    def delete_image(self, image: CloudflareImage, *, missing_ok: bool = False) -> bool:
         """
         Delete an image from Cloudflare Images.
 
+        A Cloudflare ``404`` (the image is already absent) is surfaced as the
+        typed :class:`ImageNotFoundError`, mirroring :meth:`get_image`. Because
+        ``ImageNotFoundError`` subclasses ``CloudflareImagesError``, existing
+        ``except CloudflareImagesError`` callers keep matching it.
+
         Args:
             image: CloudflareImage instance
+            missing_ok: When ``True``, a Cloudflare ``404`` (image already gone)
+                is treated as a *successful* delete and returns ``True`` instead
+                of raising. The desired end state for a delete is "not in
+                Cloudflare", so callers whose job is to converge on that state
+                (orphan cleanup, the admin delete action, the viewset delete)
+                pass ``missing_ok=True`` and remain idempotent across repeated
+                or partially-failed runs.
 
         Returns:
-            True if deletion was successful
+            True if deletion was successful (or the image was already absent and
+            ``missing_ok`` is set).
 
         Raises:
-            CloudflareImagesError: If the API request fails
+            ImageNotFoundError: Cloudflare returned 404 and ``missing_ok`` is
+                False.
+            CloudflareImagesError: For any other API/transport failure.
         """
         url = f"{self.base_url}/accounts/{self.account_id}/images/v1/{image.cloudflare_id}"
 
         try:
-            response = self.session.delete(url, headers=self._auth_headers())
-            response.raise_for_status()
-
-            data = response.json()
-
-            if not data.get("success"):
-                error_msg = ", ".join(
-                    [
-                        err.get("message", "Unknown error")
-                        for err in data.get("errors", [])
-                    ]
-                )
-                raise CloudflareImagesError(f"Cloudflare API error: {error_msg}")
-
-            # Log the deletion
-            ImageUploadLog.objects.create(
-                image=image,
-                event_type="image_deleted",
-                message="Image deleted from Cloudflare",
-                data={"response": data},
+            # _request surfaces a Cloudflare 404 as the typed ImageNotFoundError.
+            data = self._request(
+                "delete",
+                url,
+                error_prefix="Failed to delete image",
+                not_found_message=f"Image {image.cloudflare_id} not found in Cloudflare",
             )
+        except ImageNotFoundError:
+            # The image is already gone in Cloudflare. For an idempotent caller
+            # that is the desired end state, so report success and let it remove
+            # the local row; otherwise re-raise the typed not-found error (still
+            # a CloudflareImagesError subclass).
+            if missing_ok:
+                logger.info(
+                    f"Image {image.cloudflare_id} already absent in Cloudflare; "
+                    "treating delete as successful"
+                )
+                return True
+            raise
 
-            logger.info(f"Deleted image {image.cloudflare_id}")
-            return True
+        # Log the deletion
+        ImageUploadLog.objects.create(
+            image=image,
+            event_type="image_deleted",
+            message="Image deleted from Cloudflare",
+            data={"response": data},
+        )
 
-        except requests.RequestException as e:
-            logger.error(f"Failed to delete image {image.cloudflare_id}: {str(e)}")
-            raise CloudflareImagesError(f"Failed to delete image: {str(e)}") from e
+        logger.info(f"Deleted image {image.cloudflare_id}")
+        return True
 
     def validate_webhook_signature(self, payload: bytes, signature: str) -> bool:
         """
@@ -656,41 +671,57 @@ class CloudflareImagesService:
         """
         Process webhook payload from Cloudflare.
 
+        Returns the updated ``CloudflareImage`` when the payload matches a known
+        image, or ``None`` only for the genuine *unknown image* case — a missing
+        id or no matching local row. The caller (``WebhookView``) maps ``None``
+        to a 404.
+
+        Crucially, this does NOT swallow unexpected errors. A transient failure
+        (e.g. a DB hiccup, or a save error inside
+        ``update_from_cloudflare_response``) is allowed to propagate so the
+        view's existing 500 path runs and Cloudflare retries delivery. The
+        previous catch-all ``except Exception: return None`` reported such
+        recoverable errors as a 404 ("no such image, don't retry") — the
+        opposite of what idempotent webhook delivery needs, and it made the
+        view's 500 branch unreachable.
+
         Args:
             payload: Webhook payload data
 
         Returns:
-            Updated CloudflareImage instance if found
+            Updated CloudflareImage instance, or None if the image is unknown.
+
+        Raises:
+            Exception: Any unexpected error while processing a known image is
+                propagated to the caller (surfaced as a 500 so Cloudflare
+                retries).
         """
-        try:
-            image_id = payload.get("id")
-            if not image_id:
-                logger.warning("Webhook payload missing image ID")
-                return None
-
-            try:
-                image = CloudflareImage.objects.get(cloudflare_id=image_id)
-            except CloudflareImage.DoesNotExist:
-                logger.warning(f"Received webhook for unknown image: {image_id}")
-                return None
-
-            # Update image from webhook data
-            image.update_from_cloudflare_response(payload)
-
-            # Log the webhook
-            ImageUploadLog.objects.create(
-                image=image,
-                event_type="webhook_received",
-                message="Webhook processed successfully",
-                data={"payload": payload},
-            )
-
-            logger.info(f"Processed webhook for image {image.cloudflare_id}")
-            return image
-
-        except Exception as e:
-            logger.error(f"Failed to process webhook: {str(e)}")
+        image_id = payload.get("id")
+        if not image_id:
+            logger.warning("Webhook payload missing image ID")
             return None
+
+        try:
+            image = CloudflareImage.objects.get(cloudflare_id=image_id)
+        except CloudflareImage.DoesNotExist:
+            logger.warning(f"Received webhook for unknown image: {image_id}")
+            return None
+
+        # Update image from webhook data. Any error here (e.g. a transient DB
+        # failure) propagates to the view's 500 path so Cloudflare retries —
+        # it is deliberately NOT caught and reported as an unknown image.
+        image.update_from_cloudflare_response(payload)
+
+        # Log the webhook
+        ImageUploadLog.objects.create(
+            image=image,
+            event_type="webhook_received",
+            message="Webhook processed successfully",
+            data={"payload": payload},
+        )
+
+        logger.info(f"Processed webhook for image {image.cloudflare_id}")
+        return image
 
 
 # Global service instance
