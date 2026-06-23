@@ -568,6 +568,19 @@ class TestLastReferencedBookkeeping:
         # New image is also referenced now.
         assert new.last_referenced_at is not None
 
+    def test_unchanged_reference_does_not_bump(self):
+        # Idempotency: re-recording an unchanged reference (e.g. a no-op
+        # reconcile pass) must leave last_referenced_at untouched.
+        image = make_image("cf-stable")
+        Product.objects.create(image="cf-stable")
+        first = CloudflareImage.objects.get(pk=image.pk).last_referenced_at
+        assert first is not None
+
+        call_command("reconcile_image_usage")
+
+        second = CloudflareImage.objects.get(pk=image.pk).last_referenced_at
+        assert second == first
+
 
 @pytest.mark.django_db
 class TestManualLabelCollision:

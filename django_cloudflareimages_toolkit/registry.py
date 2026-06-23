@@ -132,37 +132,44 @@ def record_usage(
     object_id,
     field_name: str,
     cloudflare_id: str,
-    source: str = "auto",
+    source: str | None = None,
     using=None,
 ):
     """Idempotently upsert one usage row. The single shared write path.
 
-    ``source`` distinguishes auto-discovered rows (``"auto"``) from manual-API
-    rows (``"manual"``); ``reconcile_image_usage`` preserves the latter no
-    matter what their ``field_name`` is.
+    ``source`` distinguishes auto-discovered rows (``ImageUsage.SOURCE_AUTO``,
+    the default) from manual-API rows (``ImageUsage.SOURCE_MANUAL``);
+    ``reconcile_image_usage`` preserves the latter no matter what their
+    ``field_name`` is.
+
+    ``last_referenced_at`` on the affected image(s) is bumped only on a genuine
+    reference change — a newly created row, or an existing row now pointing at a
+    different image. Re-recording an unchanged reference (e.g. a no-op reconcile
+    pass) therefore leaves every image's clock untouched, keeping the operation
+    idempotent.
     """
     from .models import ImageUsage
 
-    image = _resolve_image(cloudflare_id, using=using)
+    if source is None:
+        source = ImageUsage.SOURCE_AUTO
 
-    # If an existing row for this slot pointed at a different image, that image
-    # is losing a reference. Bump its ``last_referenced_at`` so its orphan-
-    # retention clock starts from now rather than from the original upload.
-    existing_image_id = (
+    image = _resolve_image(cloudflare_id, using=using)
+    new_pk = image.pk if image is not None else None
+
+    # Capture the slot's prior image (if any row exists) before the upsert so we
+    # can tell "created" from "image changed" from "unchanged".
+    existing = (
         ImageUsage.objects.using(_db(using))
         .filter(
             content_type=content_type,
             object_id=str(object_id),
             field_name=field_name,
         )
-        .values_list("image_id", flat=True)
+        .values("image_id")
         .first()
     )
-    new_pk = image.pk if image is not None else None
-    if existing_image_id is not None and existing_image_id != new_pk:
-        _bump_last_referenced(existing_image_id, using=using)
 
-    usage, _ = ImageUsage.objects.using(_db(using)).update_or_create(
+    usage, created = ImageUsage.objects.using(_db(using)).update_or_create(
         content_type=content_type,
         object_id=str(object_id),
         field_name=field_name,
@@ -172,7 +179,15 @@ def record_usage(
             "source": source,
         },
     )
-    _bump_last_referenced(image, using=using)
+
+    if created:
+        _bump_last_referenced(image, using=using)
+    elif existing is not None and existing["image_id"] != new_pk:
+        # The slot now points at a different image: the previous image lost a
+        # reference (clock starts now) and the new one gained one.
+        _bump_last_referenced(existing["image_id"], using=using)
+        _bump_last_referenced(image, using=using)
+
     return usage
 
 
@@ -238,6 +253,8 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
     Raises:
         ValueError: If ``field_name`` collides with a tracked field on the model.
     """
+    from .models import ImageUsage
+
     model = type(obj)
     tracked = get_tracked_field_names(model)
     if field_name in tracked:
@@ -253,7 +270,7 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
         obj.pk,
         field_name,
         cloudflare_id,
-        source="manual",
+        source=ImageUsage.SOURCE_MANUAL,
         using=using,
     )
     # Ensure the owner's deletion clears its usage rows even when the model has
