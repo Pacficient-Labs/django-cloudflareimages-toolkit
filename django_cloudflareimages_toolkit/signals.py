@@ -30,10 +30,17 @@ def link_image_to_usages(sender, instance, using=None, **kwargs) -> None:
     """post_save on CloudflareImage: backfill the FK on matching unlinked usages.
 
     When an image referenced before its ``CloudflareImage`` record existed is later
-    registered, link the previously "unregistered" usage rows to it.
+    registered, link the previously "unregistered" usage rows to it and mark the
+    image as referenced now (so orphan-retention treats the link as a fresh
+    reference rather than basing the clock on its upload time).
     """
     from .models import ImageUsage
+    from .registry import _bump_last_referenced
 
-    ImageUsage.objects.using(_db(using)).filter(
-        cloudflare_id=instance.cloudflare_id, image__isnull=True
-    ).update(image=instance)
+    linked = (
+        ImageUsage.objects.using(_db(using))
+        .filter(cloudflare_id=instance.cloudflare_id, image__isnull=True)
+        .update(image=instance)
+    )
+    if linked:
+        _bump_last_referenced(instance, using=using)

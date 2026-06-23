@@ -129,6 +129,14 @@ class CloudflareImage(models.Model):
     variants = models.JSONField(default=list, blank=True)
     cloudflare_metadata = models.JSONField(default=dict, blank=True)
 
+    # The wall-clock at which this image was most recently confirmed referenced
+    # by content. Maintained by the usage registry: bumped each time an
+    # ``ImageUsage`` row is recorded for it. Null on legacy images that haven't
+    # been touched by the registry. Drives orphan-retention cleanup so an image
+    # that was referenced for years and just became unused isn't deleted on the
+    # next run based on its (very old) ``created_at``.
+    last_referenced_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
     class Meta:
         db_table = "cloudflare_images"
         ordering = ["-created_at"]
@@ -331,9 +339,21 @@ class ImageUsage(models.Model):
     object_id = models.CharField(max_length=255, db_index=True)
     content_object = GenericForeignKey("content_type", "object_id")
 
-    # The host field that holds the reference ("avatar", "image", ...), or
-    # "manual" for references recorded through the public registry API.
+    # The host field that holds the reference ("avatar", "image", ...), or any
+    # caller-supplied label for references recorded through the public registry
+    # API. The ``source`` column below distinguishes those.
     field_name = models.CharField(max_length=255)
+    # Origin marker that survives reconcile: ``"auto"`` for rows derived from a
+    # discovered ``CloudflareImageField`` (which can be pruned when the field is
+    # renamed/removed) and ``"manual"`` for rows recorded through
+    # ``register_usage(...)``. Manual rows are never pruned by reconcile
+    # regardless of their ``field_name``.
+    SOURCE_AUTO = "auto"
+    SOURCE_MANUAL = "manual"
+    SOURCE_CHOICES = [(SOURCE_AUTO, "Auto"), (SOURCE_MANUAL, "Manual")]
+    source = models.CharField(
+        max_length=10, choices=SOURCE_CHOICES, default=SOURCE_AUTO, db_index=True
+    )
     # Source of truth for the reference itself (mirrors the value on the host
     # field). Retained even when no CloudflareImage row exists yet.
     cloudflare_id = models.CharField(max_length=255, db_index=True)

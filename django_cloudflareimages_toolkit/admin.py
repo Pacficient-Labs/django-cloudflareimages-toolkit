@@ -724,6 +724,20 @@ class ImageUsageAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False
 
+    def has_delete_permission(self, request, obj=None):
+        # ``ImageUsage`` is a derived index — deleting a row here would make a
+        # still-referenced image look orphaned until the next reconcile and put
+        # it at risk of orphan cleanup. Drop the affected content reference (or
+        # call ``unregister_usage``) instead.
+        return False
+
+    def get_actions(self, request):
+        # Strip the bulk ``delete_selected`` action that Django re-adds even
+        # when ``has_delete_permission`` is False.
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
     def get_queryset(self, request):
         """Optimize related lookups for the changelist."""
         return (

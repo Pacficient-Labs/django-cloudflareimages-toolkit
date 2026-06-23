@@ -72,8 +72,9 @@ register_usage(obj, "other-id", field_name="hero")    # distinguish multiple ref
 unregister_usage(obj)
 ```
 
-Use a `field_name` that does not collide with a real `CloudflareImageField` name,
-since `reconcile_image_usage` treats discovered field names as auto-managed.
+Manual rows are tagged with `source="manual"` on `ImageUsage` and survive
+`reconcile_image_usage` regardless of their `field_name` — pick any label you
+like.
 
 ## Reverse lookups
 
@@ -111,4 +112,7 @@ Run it once after first deploying this version to backfill existing references
   `by-cloudflare-id` lookup, and usage-aware deletes
   (see [Views and Routes](./api-reference/views-and-routes)).
 - **Cleanup** — `cleanup_expired_images --delete-orphans` removes long-unused
-  images from Cloudflare and the database.
+  images from Cloudflare and the database. Retention is based on
+  `CloudflareImage.last_referenced_at` (bumped each time the registry records a
+  reference), not on upload time — an image that was used for years and only
+  recently became unused is protected by `--orphan-days`.

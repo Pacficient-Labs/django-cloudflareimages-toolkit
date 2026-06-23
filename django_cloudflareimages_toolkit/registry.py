@@ -105,21 +105,51 @@ def _resolve_image(cloudflare_id: str, using=None):
     )
 
 
+def _bump_last_referenced(image, using=None) -> None:
+    """Mark ``image`` as referenced now.
+
+    Updated via ``.update()`` so this doesn't trigger ``post_save`` (and thus
+    won't recurse through the registry's own signals).
+    """
+    if image is None:
+        return
+    from django.utils import timezone
+
+    from .models import CloudflareImage
+
+    CloudflareImage.objects.using(_db(using)).filter(pk=image.pk).update(
+        last_referenced_at=timezone.now()
+    )
+
+
 def record_usage(
-    content_type, object_id, field_name: str, cloudflare_id: str, using=None
+    content_type,
+    object_id,
+    field_name: str,
+    cloudflare_id: str,
+    source: str = "auto",
+    using=None,
 ):
-    """Idempotently upsert one usage row. The single shared write path."""
+    """Idempotently upsert one usage row. The single shared write path.
+
+    ``source`` distinguishes auto-discovered rows (``"auto"``) from manual-API
+    rows (``"manual"``); ``reconcile_image_usage`` preserves the latter no
+    matter what their ``field_name`` is.
+    """
     from .models import ImageUsage
 
+    image = _resolve_image(cloudflare_id, using=using)
     usage, _ = ImageUsage.objects.using(_db(using)).update_or_create(
         content_type=content_type,
         object_id=str(object_id),
         field_name=field_name,
         defaults={
             "cloudflare_id": cloudflare_id,
-            "image": _resolve_image(cloudflare_id, using=using),
+            "image": image,
+            "source": source,
         },
     )
+    _bump_last_referenced(image, using=using)
     return usage
 
 
@@ -181,7 +211,14 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
     model = type(obj)
     using = obj._state.db
     content_type = _content_type_for(model, using=using)
-    usage = record_usage(content_type, obj.pk, field_name, cloudflare_id, using=using)
+    usage = record_usage(
+        content_type,
+        obj.pk,
+        field_name,
+        cloudflare_id,
+        source="manual",
+        using=using,
+    )
     # Ensure the owner's deletion clears its usage rows even when the model has
     # no CloudflareImageField (and so was never wired in apps.ready()).
     ensure_delete_cleanup(model)

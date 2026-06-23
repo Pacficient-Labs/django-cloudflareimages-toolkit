@@ -9,6 +9,29 @@ Release notes are also published on
 
 ## [Unreleased]
 
+### Changed
+
+- **Image usage registry follow-ups (from Codex review on #19).**
+  - `ImageUsage` gains a `source` column (`"auto"` / `"manual"`); manual rows
+    survive `reconcile_image_usage` regardless of their `field_name`, so callers
+    are free to use any label with
+    `register_usage(obj, cf_id, field_name="hero")`.
+  - `CloudflareImage` gains a `last_referenced_at` column updated each time a
+    reference is recorded; `cleanup_expired_images --delete-orphans` now bases
+    `--orphan-days` retention on time-since-unused rather than upload time. A
+    `null` value falls back to `created_at` for legacy data.
+  - `reconcile_image_usage --dry-run` now reports counts from the
+    undiscovered-field and dangling-owner pruning passes (previously skipped
+    entirely), restoring the safety guarantee of the flag.
+  - The lookup route `GET /images/by-cloudflare-id/<cloudflare_id>/` now accepts
+    path-style Cloudflare custom IDs (e.g. `products/123/hero`).
+  - `?metadata__<key>=...` filters on the list endpoint reject reserved
+    JSONField lookup names (`contains`, `has_key`, …) so a stray query param
+    can't 500 the view on SQLite.
+  - The `ImageUsage` admin denies deletion (`has_delete_permission = False` and
+    the bulk `delete_selected` action is dropped) so staff can't silently make
+    referenced images look orphaned.
+
 ### Added
 
 - **Image Usage Registry (SSOT).** A new `ImageUsage` model and registry track

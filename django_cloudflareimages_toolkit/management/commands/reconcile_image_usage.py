@@ -83,44 +83,55 @@ class Command(BaseCommand):
                                 object_id__in=stale,
                             ).delete()
 
+        # Both prune passes participate in the delete count for dry-run so the
+        # reported total matches what a real run would remove.
+        deletes += self._prune_undiscovered_fields(registry, dry_run=dry_run)
+        deletes += self._prune_dangling(dry_run=dry_run)
         if not dry_run:
-            deletes += self._prune_undiscovered_fields(registry)
-            deletes += self._prune_dangling()
             self._backfill_images()
 
         self._report(dry_run, upserts, deletes)
 
-    def _prune_undiscovered_fields(self, registry) -> int:
+    @staticmethod
+    def _auto_rows():
+        """QuerySet of rows that reconcile is allowed to prune.
+
+        Manual rows (created via ``register_usage``) are protected by their
+        ``source`` marker regardless of ``field_name``. Pre-migration rows whose
+        ``source`` defaulted to ``"auto"`` but whose label was the legacy
+        ``"manual"`` are also protected, so upgrading is non-destructive.
+        """
+        return ImageUsage.objects.exclude(source=ImageUsage.SOURCE_MANUAL).exclude(
+            field_name=MANUAL_FIELD_NAME
+        )
+
+    def _prune_undiscovered_fields(self, registry, dry_run: bool = False) -> int:
         """Drop auto-tracked rows for fields no longer in the registry.
 
         Covers renamed/removed ``CloudflareImageField``s (their old usage rows
-        would otherwise keep their images looking in-use forever). Manual rows
-        — ``field_name == MANUAL_FIELD_NAME`` — are deliberately preserved
-        because they were created through the public API, not derived from a
-        host model field.
+        would otherwise keep their images looking in-use forever). Rows whose
+        ``source`` is ``"manual"`` are preserved regardless of ``field_name``.
         """
         discovered = {
             (ContentType.objects.get_for_model(model).pk, field_name)
             for model, fields in registry.items()
             for field_name in fields
         }
-        auto = ImageUsage.objects.exclude(field_name=MANUAL_FIELD_NAME)
+        auto = self._auto_rows()
         seen_pairs = auto.values_list("content_type", "field_name").distinct()
         removed = 0
         for content_type_id, field_name in seen_pairs:
             if (content_type_id, field_name) in discovered:
                 continue
-            count, _ = (
-                ImageUsage.objects.filter(
-                    content_type_id=content_type_id, field_name=field_name
-                )
-                .exclude(field_name=MANUAL_FIELD_NAME)
-                .delete()
-            )
-            removed += count
+            qs = auto.filter(content_type_id=content_type_id, field_name=field_name)
+            if dry_run:
+                removed += qs.count()
+            else:
+                count, _ = qs.delete()
+                removed += count
         return removed
 
-    def _prune_dangling(self) -> int:
+    def _prune_dangling(self, dry_run: bool = False) -> int:
         """Delete usage rows whose owning object no longer exists.
 
         Covers manually-registered owners and removed models/objects that bypass
@@ -140,7 +151,8 @@ class Command(BaseCommand):
             if model is None:
                 # The model (or its app) was removed entirely.
                 removed += rows.count()
-                rows.delete()
+                if not dry_run:
+                    rows.delete()
                 continue
             existing = {
                 str(pk) for pk in model._base_manager.values_list("pk", flat=True)
@@ -148,7 +160,8 @@ class Command(BaseCommand):
             stale_pks = [row.pk for row in rows if row.object_id not in existing]
             if stale_pks:
                 removed += len(stale_pks)
-                ImageUsage.objects.filter(pk__in=stale_pks).delete()
+                if not dry_run:
+                    ImageUsage.objects.filter(pk__in=stale_pks).delete()
         return removed
 
     def _backfill_images(self):

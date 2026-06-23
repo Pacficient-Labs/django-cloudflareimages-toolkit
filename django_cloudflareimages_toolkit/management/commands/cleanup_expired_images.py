@@ -126,14 +126,25 @@ class Command(BaseCommand):
     def _cleanup_orphans(self, now, orphan_days, dry_run):
         """Delete uploaded images referenced by no content (orphans).
 
+        The retention clock is "time since this image was last referenced," not
+        "time since upload." For images that have ever been recorded as
+        referenced (``last_referenced_at`` is set), eligibility means
+        ``last_referenced_at`` is older than the threshold. For images that have
+        never been touched by the registry (``last_referenced_at IS NULL``) we
+        fall back to ``created_at`` so legacy data and never-referenced uploads
+        both keep working.
+
         Accuracy depends on the usage registry being current; run
         ``reconcile_image_usage`` first if host data changed via bulk operations.
         """
+        from django.db.models import Q
+
         threshold = now - timezone.timedelta(days=orphan_days)
         orphans = CloudflareImage.objects.filter(
+            Q(last_referenced_at__lt=threshold)
+            | Q(last_referenced_at__isnull=True, created_at__lt=threshold),
             usages__isnull=True,
             status=ImageUploadStatus.UPLOADED,
-            created_at__lt=threshold,
         )
 
         orphan_count = orphans.count()
