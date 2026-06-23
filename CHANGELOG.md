@@ -31,6 +31,17 @@ Release notes are also published on
   - The `ImageUsage` admin denies deletion (`has_delete_permission = False` and
     the bulk `delete_selected` action is dropped) so staff can't silently make
     referenced images look orphaned.
+  - **P1 follow-up:** legacy `CloudflareImage` rows that already have
+    `ImageUsage` references are backfilled with `last_referenced_at = now()` by
+    a one-time data migration, so a long-lived image whose final reference is
+    removed immediately after upgrade is not eligible for orphan cleanup.
+    The clock is also bumped whenever an `ImageUsage` row is deleted (any
+    path) and when `record_usage` reassigns an existing row to a new image, so
+    retention correctly tracks the moment a reference disappears.
+  - The main reconcile loop now honours `source="manual"` (skipping manual rows
+    in both the stale-delete pass and the upsert), so a manual row whose
+    `field_name` collides with a tracked field is no longer wiped or
+    re-classified as `source="auto"`.
 
 ### Added
 

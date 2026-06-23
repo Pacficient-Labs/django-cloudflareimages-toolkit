@@ -105,19 +105,24 @@ def _resolve_image(cloudflare_id: str, using=None):
     )
 
 
-def _bump_last_referenced(image, using=None) -> None:
-    """Mark ``image`` as referenced now.
+def _bump_last_referenced(image_or_pk, using=None) -> None:
+    """Mark an image as referenced now.
+
+    Accepts either a ``CloudflareImage`` instance or a bare primary key (the
+    latter is used by the ``ImageUsage`` ``post_delete`` receiver where the row
+    is gone but its FK pk is still available on ``instance.image_id``).
 
     Updated via ``.update()`` so this doesn't trigger ``post_save`` (and thus
     won't recurse through the registry's own signals).
     """
-    if image is None:
+    if image_or_pk is None:
         return
     from django.utils import timezone
 
     from .models import CloudflareImage
 
-    CloudflareImage.objects.using(_db(using)).filter(pk=image.pk).update(
+    pk = image_or_pk.pk if hasattr(image_or_pk, "pk") else image_or_pk
+    CloudflareImage.objects.using(_db(using)).filter(pk=pk).update(
         last_referenced_at=timezone.now()
     )
 
@@ -139,6 +144,24 @@ def record_usage(
     from .models import ImageUsage
 
     image = _resolve_image(cloudflare_id, using=using)
+
+    # If an existing row for this slot pointed at a different image, that image
+    # is losing a reference. Bump its ``last_referenced_at`` so its orphan-
+    # retention clock starts from now rather than from the original upload.
+    existing_image_id = (
+        ImageUsage.objects.using(_db(using))
+        .filter(
+            content_type=content_type,
+            object_id=str(object_id),
+            field_name=field_name,
+        )
+        .values_list("image_id", flat=True)
+        .first()
+    )
+    new_pk = image.pk if image is not None else None
+    if existing_image_id is not None and existing_image_id != new_pk:
+        _bump_last_referenced(existing_image_id, using=using)
+
     usage, _ = ImageUsage.objects.using(_db(using)).update_or_create(
         content_type=content_type,
         object_id=str(object_id),

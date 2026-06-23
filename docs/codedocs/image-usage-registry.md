@@ -72,9 +72,12 @@ register_usage(obj, "other-id", field_name="hero")    # distinguish multiple ref
 unregister_usage(obj)
 ```
 
-Manual rows are tagged with `source="manual"` on `ImageUsage` and survive
-`reconcile_image_usage` regardless of their `field_name` — pick any label you
-like.
+Manual rows are tagged with `source="manual"` on `ImageUsage`. Reconcile
+preserves them regardless of `field_name` — including labels that collide with
+a real `CloudflareImageField` (e.g. `register_usage(product, ..., field_name="image")`
+on a `Product` whose `image` field is also tracked). For clarity, prefer a
+label that does not collide with a tracked field; the safety property is there
+mostly to keep upgrades and refactors from quietly losing references.
 
 ## Reverse lookups
 

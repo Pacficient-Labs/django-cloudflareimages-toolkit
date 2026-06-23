@@ -60,19 +60,38 @@ class Command(BaseCommand):
                     if cloudflare_id:
                         current[str(instance.pk)] = cloudflare_id
 
+                # Manual rows (``source="manual"``) are owned by the caller and
+                # take precedence over auto reconciliation: never count them as
+                # stale, never overwrite their ``source`` back to ``"auto"``. A
+                # manual row whose ``field_name`` happens to collide with a
+                # tracked field's name is therefore safe.
+                manual_object_ids = set(
+                    ImageUsage.objects.filter(
+                        content_type=content_type,
+                        field_name=field_name,
+                        source=ImageUsage.SOURCE_MANUAL,
+                    ).values_list("object_id", flat=True)
+                )
                 existing_ids = set(
                     ImageUsage.objects.filter(
                         content_type=content_type, field_name=field_name
-                    ).values_list("object_id", flat=True)
+                    )
+                    .exclude(source=ImageUsage.SOURCE_MANUAL)
+                    .values_list("object_id", flat=True)
                 )
                 stale = existing_ids - set(current)
+                actionable_current = {
+                    oid: cid
+                    for oid, cid in current.items()
+                    if oid not in manual_object_ids
+                }
 
-                upserts += len(current)
+                upserts += len(actionable_current)
                 deletes += len(stale)
 
                 if not dry_run:
                     with transaction.atomic():
-                        for object_id, cloudflare_id in current.items():
+                        for object_id, cloudflare_id in actionable_current.items():
                             record_usage(
                                 content_type, object_id, field_name, cloudflare_id
                             )
@@ -81,7 +100,7 @@ class Command(BaseCommand):
                                 content_type=content_type,
                                 field_name=field_name,
                                 object_id__in=stale,
-                            ).delete()
+                            ).exclude(source=ImageUsage.SOURCE_MANUAL).delete()
 
         # Both prune passes participate in the delete count for dry-run so the
         # reported total matches what a real run would remove.
