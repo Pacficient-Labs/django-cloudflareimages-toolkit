@@ -12,7 +12,6 @@ from django.db.models import Count
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.utils.html import format_html, format_html_join
-from django.utils.safestring import mark_safe
 
 from .exceptions import CloudflareImagesError
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus, ImageUsage
@@ -296,8 +295,9 @@ class CloudflareImageAdmin(admin.ModelAdmin):
         if count is None:
             count = obj.usages.count()
         if not count:
-            return mark_safe(
-                '<span style="color: #dc3545; font-weight: bold;">0 (orphaned)</span>'
+            return format_html(
+                '<span style="color: #dc3545; font-weight: bold;">{}</span>',
+                "0 (orphaned)",
             )
         url = (
             reverse("admin:django_cloudflareimages_toolkit_imageusage_changelist")
@@ -742,7 +742,9 @@ class ImageUsageAdmin(admin.ModelAdmin):
     def image_link(self, obj):
         """Link to the CloudflareImage record, or flag an unregistered reference."""
         if obj.image_id is None:
-            return mark_safe('<span style="color: #dc3545;">unregistered</span>')
+            return format_html(
+                '<span style="color: #dc3545;">{}</span>', "unregistered"
+            )
         url = reverse(
             "admin:django_cloudflareimages_toolkit_cloudflareimage_change",
             args=[obj.image_id],
@@ -760,8 +762,10 @@ class ImageUsageAdmin(admin.ModelAdmin):
     def registered_display(self, obj):
         """Show whether the reference resolves to a CloudflareImage."""
         if obj.is_unregistered:
-            return mark_safe('<span style="color: #dc3545;">❌ Unregistered</span>')
-        return mark_safe('<span style="color: #28a745;">✅ Registered</span>')
+            return format_html(
+                '<span style="color: #dc3545;">{}</span>', "❌ Unregistered"
+            )
+        return format_html('<span style="color: #28a745;">{}</span>', "✅ Registered")
 
     registered_display.short_description = "Registration"
 
