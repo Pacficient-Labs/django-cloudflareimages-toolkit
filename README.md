@@ -232,7 +232,7 @@ Load the template tags in your templates:
 <!-- cf_srcset / cf_responsive_image / cf_sizes return strings (no template needed) -->
 <img src="{% cf_responsive_image image.public_url 800 %}"
      srcset="{% cf_srcset image.public_url '320,640,1024,1920' %}"
-     sizes="{% cf_sizes 'max-width: 768px:100vw,default:800' %}"
+     sizes="(max-width: 768px) 100vw, 800px"
      alt="Responsive image">
 ```
 
@@ -251,9 +251,10 @@ class Product(models.Model):
 
 > **Note:** the convenience inclusion tags `cf_responsive_img`, `cf_picture`,
 > `cf_upload_form`, and `cf_image_gallery` are registered, but you must supply
-> their templates (`cloudflare_images/responsive_image.html`,
-> `picture_element.html`, `upload_form.html`, `image_gallery.html`). The package
-> does **not** ship them, so calling these tags without first adding those
+> their templates under a `cloudflare_images/` template directory
+> (`cloudflare_images/responsive_image.html`, `cloudflare_images/picture_element.html`,
+> `cloudflare_images/upload_form.html`, `cloudflare_images/image_gallery.html`). The
+> package does **not** ship them, so calling these tags without first adding those
 > templates raises `TemplateDoesNotExist`. The string-returning tags above need
 > no templates.
 
@@ -557,7 +558,7 @@ for image in images:
 | `DEFAULT_EXPIRY_MINUTES` | `30` | Default expiry time for upload URLs (2-360 minutes) |
 | `REQUIRE_SIGNED_URLS` | `True` | Require signed URLs by default |
 | `WEBHOOK_SECRET` | `None` | Secret for webhook signature validation |
-| `MAX_FILE_SIZE_MB` | `10` | Maximum file size in MB |
+| `MAX_FILE_SIZE_MB` | `10` | Size accessor exposed as `cloudflare_settings.max_file_size_mb`; **not** auto-enforced by the toolkit (Cloudflare applies its own limits) |
 | `DELIVERY_URL` | `None` | Alternate delivery domain instead of `imagedelivery.net` (bare host or full URL) |
 | `DELIVERY_PATH_PREFIX` | `cdn-cgi/imagedelivery` | Path prefix after a custom `DELIVERY_URL` (use `''` for a Worker proxy) |
 | `DELIVERY_INCLUDE_ACCOUNT_HASH` | `True` | Whether the account hash appears in custom delivery URLs (`False` for a Worker proxy) |

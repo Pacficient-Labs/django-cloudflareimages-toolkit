@@ -710,67 +710,45 @@ Webhook View
 .. code-block:: python
 
    import json
-   import hmac
-   import hashlib
+
    from django.http import HttpResponse
    from django.views.decorators.csrf import csrf_exempt
-   from django.conf import settings
-   from django_cloudflareimages_toolkit.models import CloudflareImage, ImageUploadStatus
-   
+
+   from django_cloudflareimages_toolkit.services import cloudflare_service
+
+
    @csrf_exempt
    def cloudflare_webhook(request):
-       if request.method == 'POST':
-           # Verify webhook signature
-           signature = request.headers.get('CF-Webhook-Signature')
-           if not verify_webhook_signature(request.body, signature):
-               return HttpResponse(status=401)
-           
-           try:
-               data = json.loads(request.body)
-               
-               # Handle upload completion
-               if data.get('event') == 'upload.complete':
-                   image_id = data['data']['id']
-                   
-                   # Update image status
-                   try:
-                       image = CloudflareImage.objects.get(cloudflare_id=image_id)
-                       image.status = ImageUploadStatus.UPLOADED
-                       image.file_size = data['data'].get('size')
-                       image.width = data['data'].get('width')
-                       image.height = data['data'].get('height')
-                       image.format = data['data'].get('format')
-                       image.save()
-                   except CloudflareImage.DoesNotExist:
-                       # Create new image record if it doesn't exist
-                       CloudflareImage.objects.create(
-                           cloudflare_id=image_id,
-                           filename=data['data'].get('filename', ''),
-                           status=ImageUploadStatus.UPLOADED,
-                           file_size=data['data'].get('size'),
-                           width=data['data'].get('width'),
-                           height=data['data'].get('height'),
-                           format=data['data'].get('format')
-                       )
-               
-               return HttpResponse(status=200)
-           except Exception as e:
-               return HttpResponse(status=500)
-       
-       return HttpResponse(status=405)
-   
-   def verify_webhook_signature(payload, signature):
-       webhook_secret = settings.CLOUDFLARE_IMAGES.get('WEBHOOK_SECRET')
-       if not webhook_secret:
-           return False
-       
-       expected_signature = hmac.new(
-           webhook_secret.encode(),
-           payload,
-           hashlib.sha256
-       ).hexdigest()
-       
-       return hmac.compare_digest(signature, expected_signature)
+       if request.method != 'POST':
+           return HttpResponse(status=405)
+
+       # Authenticate the call yourself only if you are NOT using the bundled
+       # WebhookView (which already validates the signature when WEBHOOK_SECRET
+       # is set). validate_webhook_signature returns True when no secret is
+       # configured, so this is a no-op in development.
+       signature = request.headers.get('X-Signature') or request.headers.get(
+           'X-Cloudflare-Signature'
+       )
+       if not cloudflare_service.validate_webhook_signature(
+           request.body, signature or ''
+       ):
+           return HttpResponse(status=401)
+
+       try:
+           payload = json.loads(request.body)
+       except json.JSONDecodeError:
+           return HttpResponse(status=400)
+
+       # Cloudflare delivers the image object at the TOP LEVEL
+       # ({"id": ..., "uploaded": ..., "draft": ..., "variants": [...]}),
+       # not an {event, data} envelope. process_webhook looks it up by
+       # payload['id'], updates the local row from those fields, and returns
+       # the CloudflareImage (or None if the id is unknown) -- the same code
+       # path the bundled WebhookView uses.
+       image = cloudflare_service.process_webhook(payload)
+       if image is None:
+           return HttpResponse(status=404)
+       return HttpResponse(status=200)
 
 Admin Integration
 -----------------

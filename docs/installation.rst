@@ -107,7 +107,7 @@ You can customize additional settings:
        # Optional settings
        'BASE_URL': 'https://api.cloudflare.com/client/v4',  # Cloudflare API base URL
        'WEBHOOK_SECRET': 'your-webhook-secret',  # For webhook signature verification
-       'MAX_FILE_SIZE_MB': 10,       # Maximum upload size in MB
+       'MAX_FILE_SIZE_MB': 10,       # Accessor only (cloudflare_settings.max_file_size_mb); not auto-enforced
 
        # Upload defaults (per-request parameters override these)
        'REQUIRE_SIGNED_URLS': True,  # Whether uploads require signed URLs
