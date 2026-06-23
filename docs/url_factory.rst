@@ -90,6 +90,20 @@ The same helpers back the public ``CloudflareImageUtils.is_cloudflare_image_url`
 ``CloudflareImageUtils.validate_image_url`` functions, so they recognize custom
 delivery domains too.
 
+Recognition only matches the exact delivery host. For a custom domain configured
+with a path prefix (the default ``cdn-cgi/imagedelivery``), a URL must use that
+prefix to be treated as a delivery URL — unrelated assets on the same host (for
+example ``https://images.example.com/static/logo.png``) are left for the regular
+Image Resizing path instead of being rewritten as flexible variants.
+
+.. note::
+
+   ``extract_image_id`` assumes the final path segment is the variant. A
+   custom-path image id (one containing ``/``) used *without* a variant — e.g.
+   ``build_url("folder/sub/abc", variant="")`` — cannot be distinguished from
+   "id + variant" and will not round-trip. Pair custom-path image ids with a
+   variant for reliable extraction and validation.
+
 API reference
 -------------
 

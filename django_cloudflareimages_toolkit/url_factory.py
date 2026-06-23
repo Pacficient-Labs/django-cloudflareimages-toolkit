@@ -63,10 +63,23 @@ class CloudflareImageURLFactory:
 
     # ------------------------------------------------------------------ config
 
+    def _delivery_url(self) -> str | None:
+        """Return the configured ``DELIVERY_URL``, or ``None``.
+
+        The settings read is wrapped defensively so the URL utilities — and the
+        ``transformations`` module that builds on them — keep working as pure
+        string helpers even before Django settings are configured (reading
+        ``django.conf.settings`` unconfigured raises ``ImproperlyConfigured``).
+        """
+        try:
+            return self._settings.delivery_url
+        except Exception:
+            return None
+
     @property
     def uses_custom_domain(self) -> bool:
         """Whether an alternate ``DELIVERY_URL`` is configured."""
-        return self._settings.delivery_url is not None
+        return self._delivery_url() is not None
 
     @property
     def path_prefix(self) -> str:
@@ -89,7 +102,7 @@ class CloudflareImageURLFactory:
         (``https://images.example.com``). Falls back to the shared
         ``imagedelivery.net`` host when no ``DELIVERY_URL`` is configured.
         """
-        raw = self._settings.delivery_url
+        raw = self._delivery_url()
         if not raw:
             return self.DEFAULT_SCHEME, self.DEFAULT_HOST
         raw = raw.strip()
@@ -137,7 +150,10 @@ class CloudflareImageURLFactory:
         Args:
             image_id: The Cloudflare image id (may contain ``/`` for custom paths).
             variant: The variant name or flexible-variant options. Pass an empty
-                value to omit the trailing segment entirely.
+                value to omit the trailing segment entirely. Note that a
+                multi-segment ``image_id`` combined with an empty ``variant`` does
+                not round-trip through :meth:`extract_image_id`, which treats the
+                last segment as the variant; pair custom-path ids with a variant.
             account_hash: Optional account-hash override.
 
         Returns:
@@ -155,18 +171,37 @@ class CloudflareImageURLFactory:
     def is_delivery_url(self, url: str) -> bool:
         """Return ``True`` if ``url`` is a Cloudflare Images delivery URL.
 
-        Recognizes both the shared ``imagedelivery.net`` host and the configured
-        custom domain (when ``DELIVERY_URL`` is set).
+        Recognizes the shared ``imagedelivery.net`` host and the configured custom
+        domain (when ``DELIVERY_URL`` is set). The host must match exactly — a URL
+        that merely contains ``imagedelivery.net`` elsewhere in the path does not
+        qualify — and for a custom domain with a path prefix the URL must use that
+        prefix.
         """
         if not url:
             return False
-        if self.DEFAULT_HOST in url:
+        host = urlsplit(url if "://" in url else f"//{url}").netloc
+        if host == self.DEFAULT_HOST:
             return True
         if self.uses_custom_domain:
-            _, host = self._scheme_and_host()
-            parts = urlsplit(url if "://" in url else f"//{url}")
-            return bool(host) and parts.netloc == host
+            _, custom_host = self._scheme_and_host()
+            if custom_host and host == custom_host:
+                return self._matches_custom_shape(url)
         return False
+
+    def _matches_custom_shape(self, url: str) -> bool:
+        """Whether ``url``'s path matches the configured custom-domain shape.
+
+        With a non-empty path prefix (native custom-domain format), the path must
+        equal or start with that prefix, so unrelated assets on the same host
+        (e.g. ``/static/logo.png``) are not mistaken for delivery URLs. With an
+        empty prefix (Worker reverse-proxy) the whole host serves images, so any
+        non-empty path qualifies.
+        """
+        path = urlsplit(url if "://" in url else f"//{url}").path.strip("/")
+        prefix = self.path_prefix
+        if prefix:
+            return path == prefix or path.startswith(f"{prefix}/")
+        return bool(path)
 
     def extract_image_id(self, url: str) -> str | None:
         """Extract the image id from a delivery URL, or ``None``.
@@ -174,6 +209,13 @@ class CloudflareImageURLFactory:
         Handles the shared host, the native custom-domain prefix, and the
         Worker shape, accounting for whether the account hash is present.
         Multi-segment (custom-path) image ids are preserved.
+
+        Note:
+            The final path segment is assumed to be the variant. A custom-path
+            image id used *without* a variant (e.g. a URL built via
+            ``build_url("folder/sub/abc", variant="")``) cannot be distinguished
+            from "id + variant" and will lose its last segment here. Pair
+            custom-path ids with a variant for reliable round-tripping.
         """
         if not self.is_delivery_url(url):
             return None
@@ -183,9 +225,7 @@ class CloudflareImageURLFactory:
             return None
         segments = path.split("/")
 
-        if parts.netloc == self.DEFAULT_HOST or (
-            not parts.netloc and self.DEFAULT_HOST in url
-        ):
+        if parts.netloc == self.DEFAULT_HOST:
             # imagedelivery.net/<hash>/<id...>[/<variant>]
             return self._image_id_from_segments(
                 segments, has_prefix=False, has_hash=True

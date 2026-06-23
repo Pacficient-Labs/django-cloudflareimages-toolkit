@@ -42,6 +42,20 @@ def cf_settings(**overrides):
     return override_settings(CLOUDFLARE_IMAGES={**BASE_SETTINGS, **overrides})
 
 
+class _RaisingSettings:
+    """A settings stand-in that raises when delivery config is read.
+
+    Simulates accessing ``django.conf.settings`` before Django is configured,
+    which raises ``ImproperlyConfigured``.
+    """
+
+    @property
+    def delivery_url(self):
+        from django.core.exceptions import ImproperlyConfigured
+
+        raise ImproperlyConfigured("Requested setting CLOUDFLARE_IMAGES, but ...")
+
+
 @cf_settings()
 class DefaultShapeTest(TestCase):
     """With no DELIVERY_URL configured, behavior matches imagedelivery.net."""
@@ -286,6 +300,105 @@ class DeterminismAndIdempotencyTest(TestCase):
         rewritten = image_url_factory.rewrite_url(IMG_URL)
         # A URL already on the custom host is left untouched.
         self.assertEqual(image_url_factory.rewrite_url(rewritten), rewritten)
+
+
+class SettingsResilienceTest(TestCase):
+    """The factory must not raise when delivery settings are unreadable.
+
+    Guards the pure-string contract of the transformations layer for pre-Django
+    contexts (Codex review, P2).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.factory = CloudflareImageURLFactory(settings=_RaisingSettings())
+
+    def test_no_custom_domain_when_settings_unreadable(self):
+        self.assertFalse(self.factory.uses_custom_domain)
+
+    def test_is_delivery_url_does_not_raise(self):
+        # Non-imagedelivery input must not touch settings and must not raise.
+        self.assertFalse(self.factory.is_delivery_url("/images/photo.jpg"))
+        self.assertFalse(self.factory.is_delivery_url("https://example.com/a/b.jpg"))
+
+    def test_shared_host_still_recognized(self):
+        self.assertTrue(self.factory.is_delivery_url(IMG_URL))
+        self.assertEqual(self.factory.extract_image_id(IMG_URL), IMAGE_ID)
+
+    @cf_settings()
+    def test_transform_pure_string_usage(self):
+        # A plain URL with an explicit zone builds via the resizing path; the
+        # constructor's delivery-URL check must not interfere.
+        from django_cloudflareimages_toolkit.transformations import (
+            CloudflareImageTransform,
+        )
+
+        url = (
+            CloudflareImageTransform("/images/photo.jpg", zone="example.com")
+            .width(300)
+            .build()
+        )
+        self.assertEqual(
+            url, "https://example.com/cdn-cgi/image/width=300/images/photo.jpg"
+        )
+
+
+@cf_settings()
+class HostExactMatchTest(TestCase):
+    """A URL must use the exact delivery host, not merely contain it (P2)."""
+
+    BOGUS = "https://example.com/imagedelivery.net/hash/id/public"
+
+    def test_is_delivery_url_rejects_embedded_host(self):
+        self.assertFalse(image_url_factory.is_delivery_url(self.BOGUS))
+
+    def test_validate_image_url_rejects_embedded_host(self):
+        from django_cloudflareimages_toolkit.transformations import CloudflareImageUtils
+
+        self.assertFalse(CloudflareImageUtils.validate_image_url(self.BOGUS))
+        self.assertTrue(CloudflareImageUtils.validate_image_url(IMG_URL))
+
+
+@cf_settings(DELIVERY_URL="images.example.com")
+class CustomDomainPathShapeTest(TestCase):
+    """Custom-domain matches require the configured path prefix (P2)."""
+
+    NON_IMAGE = "https://images.example.com/static/logo.png"
+
+    def test_non_prefixed_path_is_not_a_delivery_url(self):
+        self.assertFalse(image_url_factory.is_delivery_url(self.NON_IMAGE))
+
+    def test_prefixed_path_is_a_delivery_url(self):
+        self.assertTrue(
+            image_url_factory.is_delivery_url(image_url_factory.build_url(IMAGE_ID))
+        )
+
+    def test_transform_uses_resizing_branch_for_non_image_path(self):
+        from django_cloudflareimages_toolkit.transformations import (
+            CloudflareImageTransform,
+        )
+
+        url = CloudflareImageTransform(self.NON_IMAGE).width(300).build()
+        self.assertEqual(
+            url,
+            "https://images.example.com/cdn-cgi/image/width=300/static/logo.png",
+        )
+
+
+class MultiSegmentRoundTripTest(TestCase):
+    """Document round-trip behavior for custom-path image ids (P3)."""
+
+    @cf_settings()
+    def test_with_variant_round_trips(self):
+        url = image_url_factory.build_url("folder/sub/abc", "public")
+        self.assertEqual(image_url_factory.extract_image_id(url), "folder/sub/abc")
+
+    @cf_settings()
+    def test_without_variant_loses_last_segment(self):
+        # Documented limitation: an omitted variant is indistinguishable from the
+        # final id segment, so extraction drops it.
+        url = image_url_factory.build_url("folder/sub/abc", variant="")
+        self.assertEqual(image_url_factory.extract_image_id(url), "folder/sub")
 
 
 class SingletonTest(TestCase):
