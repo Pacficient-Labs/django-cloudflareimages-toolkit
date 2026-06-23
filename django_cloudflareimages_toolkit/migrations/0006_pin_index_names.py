@@ -18,7 +18,6 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("django_cloudflareimages_toolkit", "0005_backfill_last_referenced_at"),
     ]
