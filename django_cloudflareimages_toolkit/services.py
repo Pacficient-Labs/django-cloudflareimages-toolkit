@@ -180,10 +180,13 @@ class CloudflareImagesService:
         )
         expires_at = timezone.now() + timedelta(minutes=expiry_minutes)
 
-        # Prepare request data
+        # Prepare request data. ``sort_keys=True`` makes the serialized metadata
+        # deterministic: identical metadata always produces a byte-identical
+        # request body regardless of dict insertion order, which keeps the
+        # outgoing request reproducible and easy to assert on.
         form_data = {
             "requireSignedURLs": str(require_signed_urls).lower(),
-            "metadata": json.dumps(metadata),
+            "metadata": json.dumps(metadata, sort_keys=True),
             "expiry": expires_at.isoformat(),
         }
 

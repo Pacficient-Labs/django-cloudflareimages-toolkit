@@ -210,6 +210,27 @@ def test_serializer_accepts_blank_creator():
     assert serializer.validated_data.get("creator") == ""
 
 
+@pytest.mark.django_db
+@responses.activate
+def test_metadata_serialized_with_sorted_keys(user):
+    """Metadata JSON is key-sorted (determinism, issue #24).
+
+    ``json.dumps(metadata, sort_keys=True)`` makes the serialized request body
+    a deterministic function of the metadata's *contents*, not its insertion
+    order, so identical inputs yield byte-identical requests.
+    """
+    _mock_direct_upload()
+
+    cloudflare_service.create_direct_upload_url(
+        user=user, metadata={"zebra": 1, "alpha": 2, "mango": 3}
+    )
+
+    body = _last_upload_body()
+    # Keys appear in alphabetical order inside the serialized metadata field,
+    # regardless of the order they were supplied in above.
+    assert body.index('"alpha"') < body.index('"mango"') < body.index('"zebra"')
+
+
 # ---------------------------------------------------------------------------
 # FIX 3 - pluggable metadata factory
 # ---------------------------------------------------------------------------
