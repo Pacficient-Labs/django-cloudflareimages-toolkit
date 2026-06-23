@@ -4,11 +4,14 @@ Tests for the Cloudflare image URL factory and the ``DELIVERY_URL`` setting.
 Covers the three supported delivery URL shapes (default ``imagedelivery.net``,
 native custom domain, and Worker reverse-proxy), URL rewriting of stored
 Cloudflare variants, and integration with the model and field helpers.
+
+These tests use ``unittest``-style ``TestCase`` assertions (matching the other
+model/field tests) together with ``override_settings`` for configuration,
+rather than bare ``assert`` statements.
 """
 
-import pytest
+from django.test import TestCase, override_settings
 
-from django_cloudflareimages_toolkit.settings import cloudflare_settings
 from django_cloudflareimages_toolkit.url_factory import (
     CloudflareImageURLFactory,
     image_url_factory,
@@ -18,156 +21,161 @@ HASH = "test-account-hash"
 IMAGE_ID = "abc123"
 IMG_URL = f"https://imagedelivery.net/{HASH}/{IMAGE_ID}/public"
 
+# Cloudflare settings shared by every override. Only the keys the URL factory
+# actually reads are included; the API token is intentionally omitted since these
+# tests never call the Cloudflare API.
+BASE_SETTINGS = {
+    "ACCOUNT_ID": "test-account-id",
+    "ACCOUNT_HASH": HASH,
+}
 
-@pytest.fixture
-def factory():
-    """A fresh factory bound to the global settings singleton."""
-    return CloudflareImageURLFactory()
+# The Worker reverse-proxy shape: no path prefix and no account hash in the path.
+WORKER = {
+    "DELIVERY_URL": "cdn.example.com",
+    "DELIVERY_PATH_PREFIX": "",
+    "DELIVERY_INCLUDE_ACCOUNT_HASH": False,
+}
 
 
-def set_delivery(monkeypatch, **values):
-    """Override DELIVERY_* settings for the duration of a test."""
-    for key, value in values.items():
-        monkeypatch.setitem(cloudflare_settings._settings, key, value)
+def cf_settings(**overrides):
+    """``override_settings`` for ``CLOUDFLARE_IMAGES`` with required keys merged in."""
+    return override_settings(CLOUDFLARE_IMAGES={**BASE_SETTINGS, **overrides})
 
 
-class TestDefaultShape:
+@cf_settings()
+class DefaultShapeTest(TestCase):
     """With no DELIVERY_URL configured, behavior matches imagedelivery.net."""
 
-    def test_build_url_default(self, factory):
-        assert factory.build_url(IMAGE_ID) == IMG_URL
+    def test_build_url_default(self):
+        self.assertEqual(image_url_factory.build_url(IMAGE_ID), IMG_URL)
 
-    def test_build_url_named_variant(self, factory):
-        assert (
-            factory.build_url(IMAGE_ID, "thumbnail")
-            == f"https://imagedelivery.net/{HASH}/{IMAGE_ID}/thumbnail"
+    def test_build_url_named_variant(self):
+        self.assertEqual(
+            image_url_factory.build_url(IMAGE_ID, "thumbnail"),
+            f"https://imagedelivery.net/{HASH}/{IMAGE_ID}/thumbnail",
         )
 
-    def test_not_custom_domain(self, factory):
-        assert factory.uses_custom_domain is False
+    def test_not_custom_domain(self):
+        self.assertFalse(image_url_factory.uses_custom_domain)
 
-    def test_rewrite_is_noop(self, factory):
-        assert factory.rewrite_url(IMG_URL) == IMG_URL
+    def test_rewrite_is_noop(self):
+        self.assertEqual(image_url_factory.rewrite_url(IMG_URL), IMG_URL)
 
-    def test_extract_id(self, factory):
-        assert factory.extract_image_id(IMG_URL) == IMAGE_ID
+    def test_extract_id(self):
+        self.assertEqual(image_url_factory.extract_image_id(IMG_URL), IMAGE_ID)
 
-    def test_extract_id_without_variant(self, factory):
-        assert (
-            factory.extract_image_id(f"https://imagedelivery.net/{HASH}/{IMAGE_ID}")
-            == IMAGE_ID
+    def test_extract_id_without_variant(self):
+        self.assertEqual(
+            image_url_factory.extract_image_id(
+                f"https://imagedelivery.net/{HASH}/{IMAGE_ID}"
+            ),
+            IMAGE_ID,
         )
 
-    def test_split_variant(self, factory):
-        base, variant = factory.split_variant(IMG_URL)
-        assert base == f"https://imagedelivery.net/{HASH}/{IMAGE_ID}"
-        assert variant == "public"
+    def test_split_variant(self):
+        base, variant = image_url_factory.split_variant(IMG_URL)
+        self.assertEqual(base, f"https://imagedelivery.net/{HASH}/{IMAGE_ID}")
+        self.assertEqual(variant, "public")
 
-    def test_is_delivery_url(self, factory):
-        assert factory.is_delivery_url(IMG_URL)
-        assert not factory.is_delivery_url("https://example.org/x/y")
+    def test_is_delivery_url(self):
+        self.assertTrue(image_url_factory.is_delivery_url(IMG_URL))
+        self.assertFalse(image_url_factory.is_delivery_url("https://example.org/x/y"))
 
 
-class TestNativeCustomDomain:
+@cf_settings(DELIVERY_URL="images.example.com")
+class NativeCustomDomainTest(TestCase):
     """DELIVERY_URL set with the default cdn-cgi/imagedelivery prefix."""
 
-    def test_build_url(self, factory, monkeypatch):
-        set_delivery(monkeypatch, DELIVERY_URL="images.example.com")
-        assert factory.build_url(IMAGE_ID) == (
-            f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/public"
+    def test_build_url(self):
+        self.assertEqual(
+            image_url_factory.build_url(IMAGE_ID),
+            f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/public",
         )
 
-    def test_full_url_value_is_normalized(self, factory, monkeypatch):
-        set_delivery(monkeypatch, DELIVERY_URL="https://images.example.com/")
-        assert factory.build_url(IMAGE_ID) == (
-            f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/public"
+    @cf_settings(DELIVERY_URL="https://images.example.com/")
+    def test_full_url_value_is_normalized(self):
+        self.assertEqual(
+            image_url_factory.build_url(IMAGE_ID),
+            f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/public",
         )
 
-    def test_rewrite(self, factory, monkeypatch):
-        set_delivery(monkeypatch, DELIVERY_URL="images.example.com")
-        assert factory.rewrite_url(IMG_URL) == (
-            f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/public"
+    def test_rewrite(self):
+        self.assertEqual(
+            image_url_factory.rewrite_url(IMG_URL),
+            f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/public",
         )
 
-    def test_extract_id(self, factory, monkeypatch):
-        set_delivery(monkeypatch, DELIVERY_URL="images.example.com")
-        url = factory.build_url(IMAGE_ID)
-        assert factory.extract_image_id(url) == IMAGE_ID
+    def test_extract_id(self):
+        url = image_url_factory.build_url(IMAGE_ID)
+        self.assertEqual(image_url_factory.extract_image_id(url), IMAGE_ID)
 
-    def test_is_delivery_url(self, factory, monkeypatch):
-        set_delivery(monkeypatch, DELIVERY_URL="images.example.com")
-        assert factory.is_delivery_url(factory.build_url(IMAGE_ID))
+    def test_is_delivery_url(self):
+        self.assertTrue(
+            image_url_factory.is_delivery_url(image_url_factory.build_url(IMAGE_ID))
+        )
         # The shared host is still recognized.
-        assert factory.is_delivery_url(IMG_URL)
+        self.assertTrue(image_url_factory.is_delivery_url(IMG_URL))
         # An unrelated domain is not.
-        assert not factory.is_delivery_url("https://other.example.com/x/y")
+        self.assertFalse(
+            image_url_factory.is_delivery_url("https://other.example.com/x/y")
+        )
 
 
-class TestWorkerShape:
+@cf_settings(**WORKER)
+class WorkerShapeTest(TestCase):
     """DELIVERY_URL set with an empty prefix and no account hash in the path."""
 
-    @pytest.fixture(autouse=True)
-    def _worker_settings(self, monkeypatch):
-        set_delivery(
-            monkeypatch,
-            DELIVERY_URL="cdn.example.com",
-            DELIVERY_PATH_PREFIX="",
-            DELIVERY_INCLUDE_ACCOUNT_HASH=False,
+    def test_build_url(self):
+        self.assertEqual(
+            image_url_factory.build_url(IMAGE_ID),
+            f"https://cdn.example.com/{IMAGE_ID}/public",
         )
 
-    def test_build_url(self, factory):
-        assert (
-            factory.build_url(IMAGE_ID) == f"https://cdn.example.com/{IMAGE_ID}/public"
+    @override_settings(CLOUDFLARE_IMAGES={**WORKER})
+    def test_build_url_does_not_require_account_hash(self):
+        # The Worker injects the hash, so building must not touch ACCOUNT_HASH;
+        # no ACCOUNT_HASH is configured here at all.
+        self.assertEqual(
+            image_url_factory.build_url(IMAGE_ID),
+            f"https://cdn.example.com/{IMAGE_ID}/public",
         )
 
-    def test_build_url_does_not_require_account_hash(self, factory, monkeypatch):
-        # The Worker injects the hash, so building must not touch ACCOUNT_HASH.
-        monkeypatch.delitem(
-            cloudflare_settings._settings, "ACCOUNT_HASH", raising=False
-        )
-        assert (
-            factory.build_url(IMAGE_ID) == f"https://cdn.example.com/{IMAGE_ID}/public"
+    def test_rewrite(self):
+        self.assertEqual(
+            image_url_factory.rewrite_url(IMG_URL),
+            f"https://cdn.example.com/{IMAGE_ID}/public",
         )
 
-    def test_rewrite(self, factory):
-        assert (
-            factory.rewrite_url(IMG_URL) == f"https://cdn.example.com/{IMAGE_ID}/public"
-        )
-
-    def test_extract_id(self, factory):
+    def test_extract_id(self):
         url = f"https://cdn.example.com/{IMAGE_ID}/public"
-        assert factory.extract_image_id(url) == IMAGE_ID
+        self.assertEqual(image_url_factory.extract_image_id(url), IMAGE_ID)
 
 
-class TestRewriteDetails:
-    def test_preserves_query_string(self, factory, monkeypatch):
-        set_delivery(
-            monkeypatch,
-            DELIVERY_URL="cdn.example.com",
-            DELIVERY_PATH_PREFIX="",
-            DELIVERY_INCLUDE_ACCOUNT_HASH=False,
-        )
+class RewriteDetailsTest(TestCase):
+    @cf_settings(**WORKER)
+    def test_preserves_query_string(self):
         signed = f"{IMG_URL}?sig=abc&exp=123"
-        assert (
-            factory.rewrite_url(signed)
-            == f"https://cdn.example.com/{IMAGE_ID}/public?sig=abc&exp=123"
+        self.assertEqual(
+            image_url_factory.rewrite_url(signed),
+            f"https://cdn.example.com/{IMAGE_ID}/public?sig=abc&exp=123",
         )
 
-    def test_noop_on_unrecognized_host(self, factory, monkeypatch):
-        set_delivery(monkeypatch, DELIVERY_URL="cdn.example.com")
+    @cf_settings(DELIVERY_URL="cdn.example.com")
+    def test_noop_on_unrecognized_host(self):
         other = "https://example.org/some/path"
-        assert factory.rewrite_url(other) == other
+        self.assertEqual(image_url_factory.rewrite_url(other), other)
 
-    def test_multi_segment_image_id(self, factory, monkeypatch):
-        set_delivery(monkeypatch, DELIVERY_URL="images.example.com")
+    @cf_settings(DELIVERY_URL="images.example.com")
+    def test_multi_segment_image_id(self):
         url = f"https://imagedelivery.net/{HASH}/folder/sub/{IMAGE_ID}/public"
-        assert factory.rewrite_url(url) == (
+        self.assertEqual(
+            image_url_factory.rewrite_url(url),
             "https://images.example.com/cdn-cgi/imagedelivery/"
-            f"{HASH}/folder/sub/{IMAGE_ID}/public"
+            f"{HASH}/folder/sub/{IMAGE_ID}/public",
         )
 
 
-class TestModelIntegration:
+class ModelIntegrationTest(TestCase):
     """CloudflareImage URL helpers honor the configured delivery domain."""
 
     def _make_image(self):
@@ -181,116 +189,105 @@ class TestModelIntegration:
             ],
         )
 
+    @cf_settings()
     def test_public_url_default(self):
         image = self._make_image()
-        assert image.public_url == f"https://imagedelivery.net/{HASH}/{IMAGE_ID}/public"
+        self.assertEqual(
+            image.public_url, f"https://imagedelivery.net/{HASH}/{IMAGE_ID}/public"
+        )
 
-    def test_public_and_thumbnail_url_rewritten(self, monkeypatch):
-        set_delivery(monkeypatch, DELIVERY_URL="images.example.com")
+    @cf_settings(DELIVERY_URL="images.example.com")
+    def test_public_and_thumbnail_url_rewritten(self):
         image = self._make_image()
-        assert image.public_url == (
-            f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/public"
+        self.assertEqual(
+            image.public_url,
+            f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/public",
         )
-        assert image.thumbnail_url == (
-            f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/thumbnail"
+        self.assertEqual(
+            image.thumbnail_url,
+            f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/thumbnail",
         )
 
-    def test_variant_url_worker_shape(self, monkeypatch):
-        set_delivery(
-            monkeypatch,
-            DELIVERY_URL="cdn.example.com",
-            DELIVERY_PATH_PREFIX="",
-            DELIVERY_INCLUDE_ACCOUNT_HASH=False,
-        )
+    @cf_settings(**WORKER)
+    def test_variant_url_worker_shape(self):
         image = self._make_image()
-        assert image.public_url == f"https://cdn.example.com/{IMAGE_ID}/public"
+        self.assertEqual(image.public_url, f"https://cdn.example.com/{IMAGE_ID}/public")
 
 
-@pytest.mark.django_db
-class TestFieldIntegration:
+class FieldIntegrationTest(TestCase):
     """CloudflareImageFieldValue.get_url falls back through the factory."""
 
-    def test_get_url_fallback_uses_factory(self, monkeypatch):
+    @cf_settings(**WORKER)
+    def test_get_url_fallback_uses_factory(self):
         from django_cloudflareimages_toolkit.fields import CloudflareImageFieldValue
 
-        set_delivery(
-            monkeypatch,
-            DELIVERY_URL="cdn.example.com",
-            DELIVERY_PATH_PREFIX="",
-            DELIVERY_INCLUDE_ACCOUNT_HASH=False,
-        )
         value = CloudflareImageFieldValue(IMAGE_ID)
         # No CloudflareImage row exists, so get_url builds via the factory.
-        assert value.get_url("public") == f"https://cdn.example.com/{IMAGE_ID}/public"
+        self.assertEqual(
+            value.get_url("public"), f"https://cdn.example.com/{IMAGE_ID}/public"
+        )
 
 
-class TestTransformationsIntegration:
+class TransformationsIntegrationTest(TestCase):
     """Transformation utilities recognize custom delivery domains."""
 
-    def test_transform_recognizes_custom_domain(self, monkeypatch):
+    @cf_settings(DELIVERY_URL="images.example.com")
+    def test_transform_recognizes_custom_domain(self):
         from django_cloudflareimages_toolkit.transformations import (
             CloudflareImageTransform,
         )
 
-        set_delivery(monkeypatch, DELIVERY_URL="images.example.com")
         base = (
             f"https://images.example.com/cdn-cgi/imagedelivery/{HASH}/{IMAGE_ID}/public"
         )
         url = CloudflareImageTransform(base).width(300).height(200).build()
-        assert url == (
+        self.assertEqual(
+            url,
             "https://images.example.com/cdn-cgi/imagedelivery/"
-            f"{HASH}/{IMAGE_ID}/width=300,height=200"
+            f"{HASH}/{IMAGE_ID}/width=300,height=200",
         )
 
-    def test_utils_recognize_custom_domain(self, monkeypatch):
+    @cf_settings(**WORKER)
+    def test_utils_recognize_custom_domain(self):
         from django_cloudflareimages_toolkit.transformations import CloudflareImageUtils
 
-        set_delivery(
-            monkeypatch,
-            DELIVERY_URL="cdn.example.com",
-            DELIVERY_PATH_PREFIX="",
-            DELIVERY_INCLUDE_ACCOUNT_HASH=False,
-        )
         url = f"https://cdn.example.com/{IMAGE_ID}/public"
-        assert CloudflareImageUtils.is_cloudflare_image_url(url)
-        assert CloudflareImageUtils.extract_image_id(url) == IMAGE_ID
-        assert CloudflareImageUtils.validate_image_url(url)
+        self.assertTrue(CloudflareImageUtils.is_cloudflare_image_url(url))
+        self.assertEqual(CloudflareImageUtils.extract_image_id(url), IMAGE_ID)
+        self.assertTrue(CloudflareImageUtils.validate_image_url(url))
 
 
-class TestDeterminismAndIdempotency:
+class DeterminismAndIdempotencyTest(TestCase):
     """Guard the deterministic and idempotent guarantees of the factory."""
 
     ALL_SHAPES = [
         {},  # default imagedelivery.net
         {"DELIVERY_URL": "images.example.com"},  # native custom domain
-        {
-            "DELIVERY_URL": "cdn.example.com",
-            "DELIVERY_PATH_PREFIX": "",
-            "DELIVERY_INCLUDE_ACCOUNT_HASH": False,
-        },  # Worker reverse-proxy
+        WORKER,  # Worker reverse-proxy
     ]
 
-    @pytest.mark.parametrize("shape", ALL_SHAPES)
-    def test_build_url_is_deterministic(self, factory, monkeypatch, shape):
-        set_delivery(monkeypatch, **shape)
-        first = factory.build_url(IMAGE_ID, "public")
-        second = factory.build_url(IMAGE_ID, "public")
-        assert first == second
+    def test_build_url_is_deterministic(self):
+        for overrides in self.ALL_SHAPES:
+            with self.subTest(overrides=overrides), cf_settings(**overrides):
+                first = image_url_factory.build_url(IMAGE_ID, "public")
+                second = image_url_factory.build_url(IMAGE_ID, "public")
+                self.assertEqual(first, second)
 
-    @pytest.mark.parametrize("shape", ALL_SHAPES[1:])
-    def test_rewrite_is_idempotent(self, factory, monkeypatch, shape):
-        set_delivery(monkeypatch, **shape)
-        once = factory.rewrite_url(IMG_URL)
-        twice = factory.rewrite_url(once)
-        # Re-running on an already-rewritten URL must not change it.
-        assert once == twice
+    def test_rewrite_is_idempotent(self):
+        # Re-running rewrite on an already-rewritten URL must not change it.
+        for overrides in self.ALL_SHAPES[1:]:
+            with self.subTest(overrides=overrides), cf_settings(**overrides):
+                once = image_url_factory.rewrite_url(IMG_URL)
+                twice = image_url_factory.rewrite_url(once)
+                self.assertEqual(once, twice)
 
-    def test_rewrite_does_not_double_apply_prefix(self, factory, monkeypatch):
-        set_delivery(monkeypatch, DELIVERY_URL="images.example.com")
-        rewritten = factory.rewrite_url(IMG_URL)
+    @cf_settings(DELIVERY_URL="images.example.com")
+    def test_rewrite_does_not_double_apply_prefix(self):
+        rewritten = image_url_factory.rewrite_url(IMG_URL)
         # A URL already on the custom host is left untouched.
-        assert factory.rewrite_url(rewritten) == rewritten
+        self.assertEqual(image_url_factory.rewrite_url(rewritten), rewritten)
 
 
-def test_singleton_is_factory_instance():
-    assert isinstance(image_url_factory, CloudflareImageURLFactory)
+class SingletonTest(TestCase):
+    def test_singleton_is_factory_instance(self):
+        self.assertIsInstance(image_url_factory, CloudflareImageURLFactory)
