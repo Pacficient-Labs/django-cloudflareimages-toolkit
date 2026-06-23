@@ -32,8 +32,10 @@ Any argument left as ``None`` falls back to its settings default
 
 **Raises:**
 
-* ``CloudflareImagesAPIError``: When the API request fails
-* ``ConfigurationError``: When configuration is missing or invalid
+* ``CloudflareImagesError``: When the API request fails, or the Cloudflare
+  response reports ``success: false``
+* ``ValueError``: When a required setting (``ACCOUNT_ID``, ``API_TOKEN``) is
+  missing
 
 **Example:**
 
@@ -156,9 +158,12 @@ Django model for tracking Cloudflare Images.
 * ``variants`` (JSONField): Available image variants
 * ``metadata`` (JSONField): Custom metadata
 * ``creator`` (CharField): Cloudflare "creator" value, indexed and queryable (max 255 characters, blank allowed)
-* ``is_ready`` (BooleanField): Whether image processing is complete
+* ``status`` (CharField): Upload status — one of ``pending``, ``draft``, ``uploaded``, ``failed``, ``expired``
 * ``upload_url`` (URLField): Direct upload URL (temporary)
-* ``upload_expires_at`` (DateTimeField): When upload URL expires
+* ``expires_at`` (DateTimeField): When the upload URL expires
+
+``is_ready``, ``is_uploaded``, ``is_expired``, ``public_url``, and
+``thumbnail_url`` are read-only properties, not stored fields.
 
 **Methods:**
 
@@ -526,9 +531,11 @@ Cleans up expired upload URLs and unused images.
 
 **Options:**
 
-* ``--days`` (int): Number of days to consider for cleanup (default: 1)
-* ``--dry-run``: Show what would be deleted without actually deleting
-* ``--force``: Skip confirmation prompts
+* ``--dry-run``: Show what would be cleaned up without making changes
+* ``--delete``: Delete old expired images instead of only marking them expired
+* ``--days`` (int): Delete images expired for at least this many days (default: 7)
+* ``--delete-orphans``: Delete uploaded images referenced by no content (orphans)
+* ``--orphan-days`` (int): Only delete orphans older than this many days (default: 30)
 
 **Example:**
 
@@ -770,17 +777,20 @@ For transformation URLs (resize, crop, format, watermark) without a
        CloudflareImageTransform,
    )
 
+   # Pass an existing delivery URL to the constructor, chain the
+   # transforms, then call .build().
    url = (
-       CloudflareImageTransform()
+       CloudflareImageTransform("https://imagedelivery.net/your-hash/abc123/public")
        .width(400)
        .height(300)
        .format("auto")
        .quality(85)
-       .url(account_hash="your-hash", image_id="abc123", variant="public")
+       .build()
    )
 
-See :doc:`patterns` for a watermarking recipe that composes
-``CloudflareImageTransform.draw()`` with viewer-specific parameters.
+See :doc:`patterns` for a watermarking recipe based on Cloudflare dashboard
+variants. ``CloudflareImageTransform`` builds resize/format URLs; it does not
+expose Cloudflare's ``draw`` overlay parameter.
 
 Signed URL Generation
 ~~~~~~~~~~~~~~~~~~~~~
@@ -840,14 +850,20 @@ Constants and Settings
 
 .. code-block:: python
 
-   # Default configuration keys
+   # CLOUDFLARE_IMAGES keys and their defaults. Set these under
+   # settings.CLOUDFLARE_IMAGES; ACCOUNT_ID, ACCOUNT_HASH, and API_TOKEN are required.
    CLOUDFLARE_IMAGES_DEFAULTS = {
-       'DEFAULT_VARIANT': 'public',
-       'UPLOAD_TIMEOUT': 300,
-       'CLEANUP_EXPIRED_HOURS': 24,
-       'MAX_FILE_SIZE': 10 * 1024 * 1024,  # 10MB
-       'ALLOWED_FORMATS': ['jpeg', 'png', 'gif', 'webp'],
-       'REQUIRE_SIGNED_URLS': False,
+       'BASE_URL': 'https://api.cloudflare.com/client/v4',
+       'DEFAULT_EXPIRY_MINUTES': 30,        # 2-360
+       'REQUIRE_SIGNED_URLS': True,
+       'DEFAULT_METADATA': {},
+       'DEFAULT_CREATOR': None,
+       'METADATA_FACTORY': None,
+       'WEBHOOK_SECRET': None,
+       'MAX_FILE_SIZE_MB': 10,
+       'DELIVERY_URL': None,                          # e.g. 'images.example.com'
+       'DELIVERY_PATH_PREFIX': 'cdn-cgi/imagedelivery',
+       'DELIVERY_INCLUDE_ACCOUNT_HASH': True,
    }
 
 **API Endpoints:**

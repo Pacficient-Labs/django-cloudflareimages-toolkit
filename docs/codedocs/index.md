@@ -101,7 +101,7 @@ print(url)
 Expected output:
 
 ```text
-https://imagedelivery.net/account-hash/demo-image/width=300 height=300 fit=cover quality=85
+https://imagedelivery.net/account-hash/demo-image/fit=cover,height=300,quality=85,width=300
 ```
 
 For the full Django workflow, include the package routes and run migrations:

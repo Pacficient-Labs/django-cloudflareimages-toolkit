@@ -174,10 +174,10 @@ This updates Cloudflare first, then best-effort updates a matching local `Cloudf
 ### `delete_image`
 
 ```python
-def delete_image(self, image: CloudflareImage) -> bool: ...
+def delete_image(self, image: CloudflareImage, *, missing_ok: bool = False) -> bool: ...
 ```
 
-Deletes from Cloudflare, writes an `image_deleted` log row locally, and returns `True` on success.
+Deletes from Cloudflare, writes an `image_deleted` log row locally, and returns `True` on success. With `missing_ok=True`, a Cloudflare 404 (image already gone) is treated as a successful delete instead of raising `ImageNotFoundError` — used by orphan cleanup, the admin delete action, and the viewset so repeated deletes converge.
 
 ### `validate_webhook_signature`
 
@@ -204,5 +204,5 @@ Remote request failures raise `CloudflareImagesError`. HTTP success with a Cloud
 ```python
 image = cloudflare_service.create_direct_upload_url(user=request.user)
 cloudflare_service.check_image_status(image)
-cloudflare_service.update_image(image.cloudflare_id metadata={"reviewed": True})
+cloudflare_service.update_image(image.cloudflare_id, metadata={"reviewed": True})
 ```

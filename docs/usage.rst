@@ -611,11 +611,13 @@ Basic Image Display
 
 .. code-block:: html
 
-   <!-- Display original image -->
+   {% load cloudflare_images %}
+
+   <!-- Display original image (get_url renders the public variant) -->
    <img src="{{ profile.avatar.get_url }}" alt="Profile Avatar">
-   
-   <!-- Display with specific variant -->
-   <img src="{{ profile.avatar.get_url:'thumbnail' }}" alt="Avatar Thumbnail">
+
+   <!-- Derive a thumbnail from the public URL with a template tag -->
+   <img src="{% cf_thumbnail profile.avatar.get_url 200 %}" alt="Avatar Thumbnail">
    
    <!-- Display with fallback -->
    {% if profile.avatar %}
@@ -629,11 +631,13 @@ Advanced Template Usage
 
 .. code-block:: html
 
+   {% load cloudflare_images %}
+
    <!-- Product gallery -->
    <div class="product-gallery">
        {% for product in products %}
            <div class="product-card">
-               <img src="{{ product.image.get_url:'thumbnail' }}" 
+               <img src="{% cf_thumbnail product.image.get_url 300 %}"
                     alt="{{ product.name }}"
                     onclick="showLargeImage('{{ product.image.get_url }}')">
                <h3>{{ product.name }}</h3>
@@ -680,17 +684,25 @@ Delete Images
 
 .. code-block:: python
 
-   # Delete an image
-   image_id = "your-image-id"
-   result = service.delete_image(image_id)
-   
-   if result['success']:
+   from django_cloudflareimages_toolkit.models import CloudflareImage
+
+   # Delete an image: pass the CloudflareImage instance (delete_image returns a bool)
+   image = CloudflareImage.objects.get(cloudflare_id="your-image-id")
+   if service.delete_image(image):
+       image.delete()  # also remove the local tracking row
        print("Image deleted successfully")
 
 Webhook Handling
 ----------------
 
-Handle real-time upload notifications:
+Handle real-time upload notifications. The package already ships a webhook
+endpoint — :class:`~django_cloudflareimages_toolkit.views.WebhookView` at
+``<prefix>/api/webhook/`` — that validates the signature, updates the matching
+``CloudflareImage``, and returns the documented status codes, so most projects
+just mount the URLs and react via a ``post_save`` signal on ``CloudflareImage``.
+The view below is only illustrative if you need a fully custom endpoint; note
+that Cloudflare delivers the image object itself (``id``, ``uploaded``,
+``draft``, ``variants`` …), not an ``{event, data}`` envelope.
 
 Webhook View
 ~~~~~~~~~~~~
@@ -703,7 +715,7 @@ Webhook View
    from django.http import HttpResponse
    from django.views.decorators.csrf import csrf_exempt
    from django.conf import settings
-   from django_cloudflareimages_toolkit.models import CloudflareImage
+   from django_cloudflareimages_toolkit.models import CloudflareImage, ImageUploadStatus
    
    @csrf_exempt
    def cloudflare_webhook(request):
@@ -723,7 +735,7 @@ Webhook View
                    # Update image status
                    try:
                        image = CloudflareImage.objects.get(cloudflare_id=image_id)
-                       image.is_ready = True
+                       image.status = ImageUploadStatus.UPLOADED
                        image.file_size = data['data'].get('size')
                        image.width = data['data'].get('width')
                        image.height = data['data'].get('height')
@@ -734,7 +746,7 @@ Webhook View
                        CloudflareImage.objects.create(
                            cloudflare_id=image_id,
                            filename=data['data'].get('filename', ''),
-                           is_ready=True,
+                           status=ImageUploadStatus.UPLOADED,
                            file_size=data['data'].get('size'),
                            width=data['data'].get('width'),
                            height=data['data'].get('height'),
@@ -841,14 +853,18 @@ Test image functionality in your Django tests:
            self.assertIn('uploadURL', result)
        
        def test_cloudflare_image_model(self):
+           from django.utils import timezone
+
            image = CloudflareImage.objects.create(
                cloudflare_id='test-id',
                filename='test.jpg',
-               is_ready=True
+               expires_at=timezone.now() + timezone.timedelta(minutes=30),
            )
-           
-           self.assertEqual(str(image), 'test.jpg')
-           self.assertTrue(image.get_url().startswith('https://imagedelivery.net/'))
+
+           # __str__ is "CloudflareImage(<cloudflare_id>) - <status>"; a fresh
+           # row defaults to status "pending" and is not yet ready.
+           self.assertEqual(str(image), 'CloudflareImage(test-id) - pending')
+           self.assertFalse(image.is_ready)
 
 Best Practices
 --------------

@@ -229,13 +229,7 @@ Load the template tags in your templates:
 #### Responsive Images
 
 ```django
-<!-- Responsive image with srcset -->
-{% cf_responsive_img image.public_url "Alt text" "img-responsive" "320,640,1024" %}
-
-<!-- Picture element for different screen sizes -->
-{% cf_picture image.public_url "Alt text" "responsive-img" 320 768 1200 %}
-
-<!-- Generate srcset manually -->
+<!-- cf_srcset / cf_responsive_image / cf_sizes return strings (no template needed) -->
 <img src="{% cf_responsive_image image.public_url 800 %}"
      srcset="{% cf_srcset image.public_url '320,640,1024,1920' %}"
      sizes="{% cf_sizes 'max-width: 768px:100vw,default:800' %}"
@@ -244,19 +238,24 @@ Load the template tags in your templates:
 
 #### Upload Form
 
-```django
-<!-- Simple upload form -->
-{% cf_upload_form %}
+Use a `CloudflareImageField` on a model and render its form — the bundled widget
+ships its own template + static JS/CSS and resolves the upload endpoint
+automatically:
 
-<!-- Custom upload form -->
-{% cf_upload_form "my-upload-form" "custom-class" "Choose File" %}
+```python
+from django_cloudflareimages_toolkit.fields import CloudflareImageField
+
+class Product(models.Model):
+    image = CloudflareImageField(blank=True, null=True)
 ```
 
-#### Image Gallery
-
-```django
-{% cf_image_gallery user_images 4 250 %}
-```
+> **Note:** the convenience inclusion tags `cf_responsive_img`, `cf_picture`,
+> `cf_upload_form`, and `cf_image_gallery` are registered, but you must supply
+> their templates (`cloudflare_images/responsive_image.html`,
+> `picture_element.html`, `upload_form.html`, `image_gallery.html`). The package
+> does **not** ship them, so calling these tags without first adding those
+> templates raises `TemplateDoesNotExist`. The string-returning tags above need
+> no templates.
 
 ### Python API
 
@@ -709,12 +708,22 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 - Documentation: [https://django-cloudflareimages-toolkit.readthedocs.io/](https://django-cloudflareimages-toolkit.readthedocs.io/)
-- Issues: [https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/issues](https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/issues)
-- Discussions: [https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/discussions](https://github.com/Pacificient-Labs/django-cloudflareimages-toolkit/discussions)
+- Issues: [https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/issues](https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/issues)
+- Discussions: [https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/discussions](https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/discussions)
 
 ## Changelog
 
 For the full release history with diff links, see [GitHub Releases](https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/releases).
+
+### v1.1.1
+
+- **Docs**: Audited the whole documentation set against the code and corrected drift — removed settings that don't exist (`DEFAULT_VARIANT`, `UPLOAD_TIMEOUT`, `CLEANUP_EXPIRED_HOURS`, `ALLOWED_FORMATS`), fixed the webhook URL to include the `api/` segment, corrected the `CloudflareImageTransform` examples (`.build()`; there is no `.draw()`/`.url()`), clarified that the `cf_responsive_img`/`cf_picture`/`cf_upload_form`/`cf_image_gallery` inclusion tags require caller-supplied templates, and fixed several `usage`/`api` snippets. No code behavior changed.
+
+### v1.1.0
+
+- **Image Usage Registry (SSOT)**: new `ImageUsage` model + registry tracking which content references each image, auto-discovery of `CloudflareImageField`s, signal sync, `register_usage`/`unregister_usage`, the `reconcile_image_usage` command, an admin thumbnail gallery, and usage-aware deletes (HTTP 409 unless `?force=true`).
+- **Configurable delivery URL**: `DELIVERY_URL` / `DELIVERY_PATH_PREFIX` / `DELIVERY_INCLUDE_ACCOUNT_HASH`, plus `CloudflareImageURLFactory` (`image_url_factory`) as the single source of truth for delivery URLs.
+- **Configurable upload defaults**: `DEFAULT_METADATA`, `DEFAULT_CREATOR`, a pluggable `METADATA_FACTORY`, end-to-end Cloudflare `creator`, and `CloudflareImage.objects.register_uploaded()` for safe register-by-ID.
 
 ### v1.0.13
 

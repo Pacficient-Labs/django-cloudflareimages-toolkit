@@ -99,8 +99,8 @@ Links
 -----
 
 * **PyPI**: https://pypi.org/project/django-cloudflareimages-toolkit/
-* **GitHub**: https://github.com/PacNPal/django-cloudflareimages-toolkit
-* **Issues**: https://github.com/PacNPal/django-cloudflareimages-toolkit/issues
+* **GitHub**: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit
+* **Issues**: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/issues
 
 Indices and tables
 ==================

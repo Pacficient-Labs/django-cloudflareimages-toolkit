@@ -7,7 +7,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release notes are also published on
 [GitHub Releases](https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/releases).
 
-## [Unreleased]
+## [1.1.1] - 2026-06-23
+
+### Fixed
+
+- **Migration index names.** Migrations `0001`/`0003` shipped `Meta.indexes`
+  names that were 31 characters — one over Django's 30-char `models.E034` limit —
+  and never matched the names a newer Django computes for the models, so
+  `makemigrations` repeatedly tried to write a spurious `RenameIndex` migration
+  into the installed package (site-packages). The model `Meta` index names are
+  now pinned to short, valid identifiers, and a new migration
+  `0006_pin_index_names` renames the historical indexes in place so existing and
+  fresh databases converge on the same names. Verified: `makemigrations --check`
+  reports no changes and all 216 tests pass. (No `0002` was ever dropped from the
+  history — the migration graph is linear and additive — so a stray leftover
+  migration was ruled out as the cause.)
+
+### Documentation
+
+- **Full documentation audit against the code.** Removed settings that don't
+  exist (`DEFAULT_VARIANT`, `UPLOAD_TIMEOUT`, `CLEANUP_EXPIRED_HOURS`,
+  `ALLOWED_FORMATS`); corrected the webhook URL to include the `api/` segment;
+  fixed the `CloudflareImageTransform` examples (it takes a `base_url` and ends
+  in `.build()`; there is no `.draw()`/`.url()`); corrected the
+  `REQUIRE_SIGNED_URLS` default (`True`) and the `cleanup_expired_images --days`
+  default (`7`); flagged the `cf_responsive_img` / `cf_picture` /
+  `cf_upload_form` / `cf_image_gallery` inclusion tags as requiring
+  caller-supplied templates (the package does not ship them); fixed broken
+  `usage`/`api` snippets (the `delete_image` signature, the read-only `is_ready`
+  property, `__str__` output, and template-tag call syntax); refreshed `llms.txt`
+  (version, models, commands); and corrected GitHub org references. No code
+  behavior changed by the docs pass.
 
 ### Changed
 
@@ -193,4 +223,5 @@ Release notes are also published on
   pointed consumers at `register_uploaded`, which validates against Cloudflare
   before persisting.
 
+[1.1.1]: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/compare/v1.0.14...v1.1.0

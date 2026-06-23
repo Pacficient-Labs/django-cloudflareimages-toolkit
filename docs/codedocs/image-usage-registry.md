@@ -54,8 +54,8 @@ class Product(models.Model):
     image = CloudflareImageField(blank=True, null=True)
 
 product = Product.objects.create(image="cloudflare-image-id")
-product.image_usage = product.image  # the value is just the Cloudflare ID
-# An ImageUsage row now links "cloudflare-image-id" to this product.
+# Saving the model fires the post_save receiver, which creates/updates an
+# ImageUsage row linking "cloudflare-image-id" to this product — no extra code.
 ```
 
 ## Manual API

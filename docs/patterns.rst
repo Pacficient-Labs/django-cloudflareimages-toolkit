@@ -538,10 +538,28 @@ JSON API. For pure DRF, the permission class above is lighter-weight.
 Dynamic watermarking based on user context
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Cloudflare Images supports watermark transformations natively
-(``draw=`` parameter). Use ``CloudflareImageTransform`` to build a URL
-that injects a watermark identifying the viewer — useful for leak-
-attribution on shared / paid content.
+Cloudflare Images can draw a watermark overlay, but that is configured as a
+named **variant** in the Cloudflare dashboard (Images → Variants), not through
+this toolkit. ``CloudflareImageTransform`` builds resize / crop / format /
+quality URLs; it does **not** expose Cloudflare's ``draw`` overlay parameter. So
+pre-create watermark variants in Cloudflare and select one per viewer — useful
+for leak-attribution on shared / paid content.
+
+.. code-block:: python
+
+   def watermarked_url_for(image, viewer) -> str | None:
+       """Return the delivery URL for a viewer-appropriate watermark variant.
+
+       ``watermark-light`` / ``watermark-heavy`` are named variants you create
+       once in the Cloudflare dashboard; each is configured there to draw the
+       corresponding watermark asset, so paid users see a small, unobtrusive
+       mark while free users see a larger one.
+       """
+       variant = "watermark-light" if viewer.is_premium else "watermark-heavy"
+       return image.get_url(variant)
+
+For plain resize/format transforms (no overlay), build them with the fluent API
+on an existing delivery URL:
 
 .. code-block:: python
 
@@ -549,42 +567,26 @@ attribution on shared / paid content.
        CloudflareImageTransform,
    )
 
-   ACCOUNT_HASH = "your-account-hash"
-   WATERMARK_IMAGE_ID = "static-watermark-asset-id"
-
-   def watermarked_url_for(image, viewer) -> str:
-       """Return a Cloudflare delivery URL with a viewer-specific
-       watermark drawn over the bottom-right corner."""
-       transform = (
-           CloudflareImageTransform()
-           .width(1600)
-           .quality(85)
-           .format("auto")
-           # `draw` overlays another Cloudflare-hosted image; use a
-           # per-tier watermark asset so paid users see a small,
-           # unobtrusive mark while free users see a larger one.
-           .draw(
-               WATERMARK_IMAGE_ID,
-               opacity=0.4 if viewer.is_premium else 0.7,
-               bottom=24,
-               right=24,
-               width=160 if viewer.is_premium else 240,
-           )
-       )
-       return transform.url(ACCOUNT_HASH, image.cloudflare_id, variant="public")
+   url = (
+       CloudflareImageTransform(image.public_url)
+       .width(1600)
+       .quality(85)
+       .format("auto")
+       .build()
+   )
 
 
-For text watermarks (e.g. ``"shared by {viewer.email} on {date}"``), pre-
-render them as transparent PNGs and upload them as Cloudflare Images
-once; reference them in ``draw`` by ``cloudflare_id`` as above. The
-toolkit does **not** render text watermarks server-side; Cloudflare's
-``draw`` transformation expects an existing image asset.
+For text watermarks (e.g. ``"shared by {viewer.email} on {date}"``), pre-render
+them as transparent PNGs, upload them to Cloudflare Images once, and reference
+them from a dashboard variant's ``draw`` configuration. The toolkit does **not**
+render text watermarks server-side; Cloudflare's ``draw`` expects an existing
+image asset.
 
 
 Combining all three: signed + scoped + watermarked URLs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For shared previews that should expire and that identify the viewer:
+For shared previews that identify the viewer (see the signed-URL note below):
 
 .. code-block:: python
 
@@ -592,16 +594,16 @@ For shared previews that should expire and that identify the viewer:
        # 1. Verify access (raise PermissionDenied if not allowed)
        check_can_view(image, viewer)
 
-       # 2. Get a signed, short-lived URL for the base image
-       base_url = image.get_signed_url(variant="public", expiry=300)
-
-       # 3. Layer the watermark transformation on top
+       # 2. Return a viewer-specific watermarked variant URL
        return watermarked_url_for(image, viewer)
 
-You can combine signed URLs with transformations because Cloudflare
-Images applies transformations on the signed delivery URL before
-verifying the signature. Test in your environment that your signed-URL
-expiry matches the cache TTL you're handing to clients.
+.. note::
+
+   ``CloudflareImage.get_signed_url()`` currently returns the regular
+   (unsigned) delivery URL — signed-URL generation is a documented TODO on the
+   model. If you need true signed, expiring URLs, generate them against
+   Cloudflare's signing API in your own code until that lands; do not rely on
+   ``get_signed_url`` for access control.
 
 SSOT & orphan auditing with the usage registry
 ==============================================
