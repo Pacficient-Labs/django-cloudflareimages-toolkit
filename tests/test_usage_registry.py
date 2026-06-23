@@ -374,9 +374,16 @@ class TestSourceMarker:
 
 @pytest.mark.django_db
 class TestLegacyMigration:
-    """Migration 0005 protects legacy custom-label manual rows (Codex PR #20)."""
+    """Migration 0005 backfills last_referenced_at but does NOT guess source.
 
-    def test_reclassifies_legacy_manual_rows(self):
+    Reclassifying pre-existing rows is intentionally avoided: a legacy auto row
+    for a removed field is indistinguishable from a legacy custom-label manual
+    row, so the migration only repairs ``last_referenced_at`` and leaves
+    ``source`` untouched (authoritative only for rows the new register_usage
+    creates). See Codex PR #20 review.
+    """
+
+    def _run_migration(self):
         from importlib import import_module
         from types import SimpleNamespace
 
@@ -386,34 +393,41 @@ class TestLegacyMigration:
             "django_cloudflareimages_toolkit.migrations."
             "0005_backfill_last_referenced_at"
         )
+        editor = SimpleNamespace(connection=SimpleNamespace(alias="default"))
+        migration.backfill_last_referenced(global_apps, editor)
 
-        # A legacy custom-label manual row: created via register_usage(...,
-        # field_name="hero") before the source column existed, so it defaulted
-        # to "auto" and its field isn't a tracked CloudflareImageField.
-        plain = Plain.objects.create(name="x")
-        ct = ContentType.objects.get_for_model(Plain)
+    def test_backfills_last_referenced_for_referenced_images(self):
+        image = make_image("cf-ref")
+        product = Product.objects.create(image="cf-ref")
+        # Simulate a legacy row from before last_referenced_at existed.
+        CloudflareImage.objects.filter(pk=image.pk).update(last_referenced_at=None)
+        assert usages_for(product).get().image_id == image.pk
+
+        self._run_migration()
+
+        image.refresh_from_db()
+        assert image.last_referenced_at is not None
+
+    def test_does_not_touch_source(self):
+        # A legacy auto row for a removed/undiscovered field stays "auto" so it
+        # remains prunable; the migration must not flip it to "manual".
+        product = Product.objects.create(name="p")
+        ct = ContentType.objects.get_for_model(Product)
         legacy = ImageUsage.objects.create(
             content_type=ct,
-            object_id=str(plain.pk),
-            field_name="hero",
-            cloudflare_id="cf-legacy",
+            object_id=str(product.pk),
+            field_name="removed_field",
+            cloudflare_id="cf-removed",
             source=ImageUsage.SOURCE_AUTO,
         )
-        # A genuine auto row for a tracked field must stay "auto".
-        product = Product.objects.create(image="cf-auto")
 
-        editor = SimpleNamespace(connection=SimpleNamespace(alias="default"))
-        migration.backfill_registry_bookkeeping(global_apps, editor)
+        self._run_migration()
 
         legacy.refresh_from_db()
-        assert legacy.source == ImageUsage.SOURCE_MANUAL
-
-        auto_row = ImageUsage.objects.get(object_id=str(product.pk), field_name="image")
-        assert auto_row.source == ImageUsage.SOURCE_AUTO
-
-        # And the reclassified legacy row now survives reconcile.
+        assert legacy.source == ImageUsage.SOURCE_AUTO
+        # Still prunable by reconcile (its field isn't discovered).
         call_command("reconcile_image_usage")
-        assert ImageUsage.objects.filter(pk=legacy.pk).exists()
+        assert not ImageUsage.objects.filter(pk=legacy.pk).exists()
 
 
 @pytest.mark.django_db

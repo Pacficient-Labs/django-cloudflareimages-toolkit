@@ -82,6 +82,14 @@ preserves them regardless of `field_name`.
 > raises `ValueError` if you pass a colliding label. Use a distinct label (the
 > default `"manual"` is always safe).
 
+> **Upgrading a dev build that already used `register_usage` with a custom
+> label.** The `source` marker only exists from this release on, so reconcile
+> can't tell a pre-existing custom-label manual row apart from an auto row for a
+> renamed/removed field. Re-run your `register_usage(...)` calls once after
+> upgrading to stamp `source="manual"` on those rows. (Rows using the default
+> `"manual"` label are always protected; released versions have no pre-existing
+> rows because the registry ships whole in one release.)
+
 ## Reverse lookups
 
 ```python
