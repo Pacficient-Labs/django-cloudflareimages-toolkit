@@ -112,3 +112,7 @@ product.image.get_metadata()
 ```
 </Accordion>
 </Accordions>
+
+`CloudflareImage` tracks *what* was uploaded. To track *which content references
+each image* — the reverse direction — see the
+[Image Usage Registry](./image-usage-registry).

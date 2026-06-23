@@ -36,8 +36,23 @@ urlpatterns = [
 The router registers:
 
 ```python
-router.register(r"images", CloudflareImageViewSet basename="images")
+router.register(r"images", CloudflareImageViewSet, basename="images")
+router.register(r"usages", ImageUsageViewSet, basename="usages")
 ```
+
+### Image usage & lookup routes
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /api/images/by-cloudflare-id/{cloudflare_id}/` | Retrieve an image by its Cloudflare ID. |
+| `GET /api/images/{id}/usages/` | List the content references for one image. |
+| `GET /api/images/orphans/` | List images referenced by no content. |
+| `GET /api/usages/` | Browse usage records (`content_type`, `field_name`, `unregistered` filters). |
+| `DELETE /api/images/{id}/` | Delete from Cloudflare + DB; **409** if still referenced unless `?force=true`. |
+| `POST /api/images/bulk_delete/` | Usage-aware bulk delete by `ids` / `cloudflare_ids` (+ `force`). |
+
+List filtering on `GET /api/images/` also accepts `filename`, `creator`,
+`orphaned=true`, `search=`, `ordering=`, and `metadata__<key>=<value>`.
 
 ## View classes
 
@@ -57,15 +72,36 @@ class CloudflareImageViewSet(ModelViewSet):
     serializer_class = CloudflareImageSerializer
     pagination_class = ImagePagination
     permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [SearchFilter, OrderingFilter]
 
     def get_queryset(self): ...
-    def check_status(self, request: Request pk=None) -> Response: ...
-    def delete_from_cloudflare(self, request: Request pk=None) -> Response: ...
-    def logs(self, request: Request pk=None) -> Response: ...
-    def bulk_status_check(self, request: Request) -> Response: ...
+    def by_cloudflare_id(self, request, cloudflare_id=None) -> Response: ...
+    def orphans(self, request) -> Response: ...
+    def usages(self, request, pk=None) -> Response: ...
+    def check_status(self, request, pk=None) -> Response: ...
+    def destroy(self, request, *args, **kwargs) -> Response: ...   # usage-aware
+    def delete_from_cloudflare(self, request, pk=None) -> Response: ...
+    def bulk_delete(self, request) -> Response: ...                # usage-aware
+    def logs(self, request, pk=None) -> Response: ...
+    def bulk_status_check(self, request) -> Response: ...
 ```
 
-`get_queryset()` always scopes results to `request.user` and optionally applies filters from `ImageFilterSerializer`.
+`get_queryset()` always scopes results to `request.user` and applies a filter
+only when its query parameter is actually present in the request. `destroy()` and
+`bulk_delete()` refuse to remove an image that still has `ImageUsage` rows unless
+`force` is set.
+
+### `ImageUsageViewSet`
+
+```python
+class ImageUsageViewSet(ReadOnlyModelViewSet):
+    serializer_class = ImageUsageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+```
+
+Read-only, scoped to the requesting user's images (staff also see usages whose
+image is unregistered). Supports `content_type` (`app_label.model`), `field_name`,
+and `unregistered` query params.
 
 ### `CreateUploadURLView`
 
@@ -113,6 +149,8 @@ class ImageStatusSerializer(serializers.Serializer): ...
 class ImageUploadLogSerializer(serializers.ModelSerializer): ...
 class WebhookPayloadSerializer(serializers.Serializer): ...
 class BulkImageStatusSerializer(serializers.Serializer): ...
+class BulkImageDeleteSerializer(serializers.Serializer): ...
+class ImageUsageSerializer(serializers.ModelSerializer): ...
 class ImageFilterSerializer(serializers.Serializer): ...
 ```
 
@@ -128,6 +166,9 @@ Key request and filtering fields:
 | `ImageFilterSerializer` | `status` | enum | Uses `ImageUploadStatus.choices`. |
 | `ImageFilterSerializer` | `uploaded_after` / `uploaded_before` | datetime | Optional upload time range. |
 | `ImageFilterSerializer` | `has_variants` | `bool` | Filters empty vs non-empty variants. |
+| `ImageFilterSerializer` | `filename` / `creator` / `orphaned` | mixed | Filename `icontains`, exact creator, orphans-only. |
+| `BulkImageDeleteSerializer` | `ids` / `cloudflare_ids` / `force` | lists + bool | At least one id list is required. |
+| `ImageUsageSerializer` | `content_type` / `content_object` / `is_unregistered` | read-only | Serialised view of an `ImageUsage` row. |
 | `WebhookPayloadSerializer` | `id` | `str` | Required Cloudflare image ID. |
 
 ## Usage example

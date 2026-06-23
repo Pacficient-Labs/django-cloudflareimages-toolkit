@@ -74,6 +74,7 @@ Features
 
 * **Secure Uploads**: Direct client-side uploads without exposing API credentials
 * **Safe Registration**: ``register_uploaded`` validates client-supplied image IDs against Cloudflare before persisting
+* **Usage Registry (SSOT)**: Tracks which content references each image, detects orphans, and powers an admin thumbnail gallery
 * **Creator Tagging**: Associate uploads with a Cloudflare ``creator`` value, persisted and queryable
 * **Pluggable Metadata**: ``ImageMetadataFactory`` for server-side control over upload metadata
 * **Image Variants**: Automatic support for Cloudflare's image transformations

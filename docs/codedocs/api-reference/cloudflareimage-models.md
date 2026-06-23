@@ -1,6 +1,6 @@
 ---
 title: "CloudflareImage Models"
-description: "Reference for CloudflareImage, ImageUploadLog, and ImageUploadStatus."
+description: "Reference for CloudflareImage, ImageUploadLog, ImageUsage, and ImageUploadStatus."
 ---
 
 Source file: `django_cloudflareimages_toolkit/models.py`
@@ -11,6 +11,7 @@ Import paths:
 from django_cloudflareimages_toolkit.models import (
     CloudflareImage,
     ImageUploadLog,
+    ImageUsage,
     ImageUploadStatus,
 )
 ```
@@ -149,6 +150,33 @@ Example:
 
 ```python
 logs = ImageUploadLog.objects.filter(image=image).order_by("-timestamp")
+```
+
+## `ImageUsage`
+
+Reverse index mapping each image to the content that references it. See the
+[Image Usage Registry](../image-usage-registry) concept page for the full design.
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `content_type` | `ForeignKey[ContentType]` | — | Model of the referencing object. |
+| `object_id` | `CharField` | — | PK of the referencing object (string, so int and UUID pks both work). |
+| `content_object` | `GenericForeignKey` | — | The referencing instance. |
+| `field_name` | `CharField` | — | Field holding the reference (e.g. `avatar`), or `manual`. |
+| `cloudflare_id` | `CharField` | — | Referenced Cloudflare image ID (the source of truth). |
+| `image` | `ForeignKey[CloudflareImage]` | `None` | Resolved image; `null` marks an unregistered reference. |
+| `created_at` / `updated_at` | `DateTimeField` | auto | Row timestamps. |
+
+A unique constraint on `(content_type, object_id, field_name)` makes all writes
+idempotent. `is_unregistered` returns `True` when `image` is `null`.
+
+```python
+# Reverse lookups
+image.usages.all()                                    # what references this image
+CloudflareImage.objects.filter(usages__isnull=True)   # orphaned (unused) images
+ImageUsage.objects.filter(image__isnull=True)         # referenced but unregistered
 ```
 
 These models are the persistence layer behind the service, admin, cleanup command, and `CloudflareImageViewSet`.

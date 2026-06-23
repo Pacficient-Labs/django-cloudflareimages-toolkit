@@ -1,0 +1,87 @@
+{% extends "admin/change_list.html" %}
+{% load cloudflare_images %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  .cfimg-view-toggle { margin: 8px 0 4px; font-size: 13px; }
+  .cfimg-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 16px;
+    margin: 12px 0 20px;
+  }
+  .cfimg-card {
+    border: 1px solid var(--hairline-color, #e0e0e0);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--body-bg, #fff);
+  }
+  .cfimg-thumb {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 160px;
+    background: #f4f4f4;
+    overflow: hidden;
+  }
+  .cfimg-thumb img { max-width: 100%; max-height: 160px; object-fit: cover; }
+  .cfimg-placeholder { color: #999; font-size: 12px; }
+  .cfimg-meta { padding: 8px 10px; font-size: 12px; }
+  .cfimg-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cfimg-badges { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .cfimg-badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; color: #fff; }
+</style>
+{% endblock %}
+
+{% block result_list %}
+  <div class="cfimg-view-toggle">
+    {% if cfimg_view == "table" %}
+      <a href="?{% if cfimg_querystring %}{{ cfimg_querystring }}&amp;{% endif %}view=gallery">Gallery view</a>
+      | <strong>Table view</strong>
+    {% else %}
+      <strong>Gallery view</strong>
+      | <a href="?{% if cfimg_querystring %}{{ cfimg_querystring }}&amp;{% endif %}view=table">Table view</a>
+    {% endif %}
+  </div>
+
+  {% if cfimg_view == "table" %}
+    {{ block.super }}
+  {% else %}
+    {% if cl.result_list %}
+      <div class="cfimg-gallery">
+        {% for obj in cl.result_list %}
+          <div class="cfimg-card">
+            <a class="cfimg-thumb"
+               href="{% url 'admin:django_cloudflareimages_toolkit_cloudflareimage_change' obj.pk %}">
+              {% with thumb=obj.thumbnail_url %}
+                {% if thumb %}
+                  <img src="{{ thumb }}" alt="{{ obj.filename }}" loading="lazy">
+                {% else %}
+                  <span class="cfimg-placeholder">No preview</span>
+                {% endif %}
+              {% endwith %}
+            </a>
+            <div class="cfimg-meta">
+              <div class="cfimg-name" title="{{ obj.filename|default:obj.cloudflare_id }}">
+                {{ obj.filename|default:obj.cloudflare_id }}
+              </div>
+              <div class="cfimg-badges">
+                <span class="cfimg-badge" style="background: {{ obj.status|cfimg_status_color }};">
+                  {{ obj.get_status_display }}
+                </span>
+                {% if obj.usage_count %}
+                  <span class="cfimg-badge" style="background: #6c757d;">Used &times;{{ obj.usage_count }}</span>
+                {% else %}
+                  <span class="cfimg-badge" style="background: #dc3545;">Orphaned</span>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p>{{ cl.result_count }} result{{ cl.result_count|pluralize }}</p>
+    {% endif %}
+  {% endif %}
+{% endblock %}

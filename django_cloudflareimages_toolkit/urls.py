@@ -12,6 +12,7 @@ from .views import (
     CloudflareImageViewSet,
     CreateUploadURLView,
     ImageStatsView,
+    ImageUsageViewSet,
     WebhookView,
 )
 
@@ -20,6 +21,7 @@ app_name = "cloudflare_images"
 # Create router for ViewSets
 router = DefaultRouter()
 router.register(r"images", CloudflareImageViewSet, basename="images")
+router.register(r"usages", ImageUsageViewSet, basename="usages")
 
 urlpatterns = [
     # ViewSet routes

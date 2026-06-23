@@ -7,7 +7,7 @@ This module contains the DRF serializers for API endpoints.
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus
+from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus, ImageUsage
 
 User = get_user_model()
 
@@ -145,6 +145,73 @@ class ImageUploadLogSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "timestamp"]
 
 
+class ImageUsageSerializer(serializers.ModelSerializer):
+    """Serializer for ImageUsage rows (image <-> content object references)."""
+
+    content_type = serializers.SerializerMethodField()
+    content_object = serializers.SerializerMethodField()
+    is_unregistered = serializers.ReadOnlyField()
+
+    class Meta:
+        model = ImageUsage
+        fields = [
+            "id",
+            "cloudflare_id",
+            "image",
+            "content_type",
+            "object_id",
+            "content_object",
+            "field_name",
+            "is_unregistered",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_content_type(self, obj) -> str:
+        """Return the referencing model as ``app_label.model``."""
+        ct = obj.content_type
+        return f"{ct.app_label}.{ct.model}"
+
+    def get_content_object(self, obj) -> str | None:
+        """Best-effort human label for the referencing object."""
+        try:
+            target = obj.content_object
+        except Exception:
+            return None
+        return str(target) if target is not None else None
+
+
+class BulkImageDeleteSerializer(serializers.Serializer):
+    """Serializer for bulk image deletion requests."""
+
+    ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+        help_text="Internal image IDs (UUIDs) to delete.",
+    )
+    cloudflare_ids = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+        help_text="Cloudflare image IDs to delete.",
+    )
+    force = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Delete even when an image is still referenced by content.",
+    )
+
+    def validate(self, attrs):
+        """Require at least one identifier to act on."""
+        if not attrs.get("ids") and not attrs.get("cloudflare_ids"):
+            raise serializers.ValidationError(
+                "Provide at least one of 'ids' or 'cloudflare_ids'."
+            )
+        return attrs
+
+
 class WebhookPayloadSerializer(serializers.Serializer):
     """Serializer for validating webhook payloads."""
 
@@ -185,4 +252,13 @@ class ImageFilterSerializer(serializers.Serializer):
     )
     require_signed_urls = serializers.BooleanField(
         required=False, help_text="Filter by signed URL requirement"
+    )
+    filename = serializers.CharField(
+        required=False, help_text="Case-insensitive match on filename/original filename"
+    )
+    creator = serializers.CharField(
+        required=False, help_text="Filter by exact Cloudflare creator value"
+    )
+    orphaned = serializers.BooleanField(
+        required=False, help_text="Only images referenced by no content (orphans)"
     )

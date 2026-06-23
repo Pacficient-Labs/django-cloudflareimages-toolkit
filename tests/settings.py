@@ -26,6 +26,8 @@ INSTALLED_APPS = [
     "django.contrib.sites",
     "rest_framework",
     "django_cloudflareimages_toolkit",
+    # Test-only app providing host models that use CloudflareImageField.
+    "tests",
 ]
 
 MIDDLEWARE = [
@@ -58,12 +60,32 @@ TEMPLATES = [
 
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
+# A second in-memory sqlite database is configured so multi-DB tests can verify
+# that saves on a non-default database land in the right place.
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": ":memory:",
-    }
+    },
+    "other": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": ":memory:",
+    },
 }
+
+
+class _AllowAllRouter:
+    """Trivial test router: allow every model on every database.
+
+    Without it, ``migrate`` only syncs the unmigrated ``tests`` app to the
+    default database, so saves on ``other`` would hit a missing table.
+    """
+
+    def allow_migrate(self, db, app_label, model_name=None, **hints):
+        return True
+
+
+DATABASE_ROUTERS = ["tests.settings._AllowAllRouter"]
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
