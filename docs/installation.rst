@@ -105,17 +105,21 @@ You can customize additional settings:
        'ACCOUNT_HASH': 'your-account-hash',
        
        # Optional settings
-       'DEFAULT_VARIANT': 'public',  # Default image variant
-       'UPLOAD_TIMEOUT': 300,        # Upload timeout in seconds
-       'WEBHOOK_SECRET': 'your-webhook-secret',  # For webhook verification
-       'CLEANUP_EXPIRED_HOURS': 24,  # Hours before cleaning up expired uploads
+       'BASE_URL': 'https://api.cloudflare.com/client/v4',  # Cloudflare API base URL
+       'WEBHOOK_SECRET': 'your-webhook-secret',  # For webhook signature verification
+       'MAX_FILE_SIZE_MB': 10,       # Accessor only (cloudflare_settings.max_file_size_mb); not auto-enforced
 
        # Upload defaults (per-request parameters override these)
        'REQUIRE_SIGNED_URLS': True,  # Whether uploads require signed URLs
-       'DEFAULT_EXPIRY_MINUTES': 30, # Default upload URL expiry (minutes)
+       'DEFAULT_EXPIRY_MINUTES': 30, # Default upload URL expiry (minutes, 2-360)
        'DEFAULT_METADATA': {},       # Default metadata merged under per-request metadata
        'DEFAULT_CREATOR': None,      # Default Cloudflare "creator" value
        'METADATA_FACTORY': None,     # Dotted path / class / instance / callable for metadata
+
+       # Optional: serve images from an alternate domain instead of imagedelivery.net
+       'DELIVERY_URL': None,                             # e.g. 'images.example.com'
+       'DELIVERY_PATH_PREFIX': 'cdn-cgi/imagedelivery',  # '' for a Worker proxy
+       'DELIVERY_INCLUDE_ACCOUNT_HASH': True,            # False for a Worker proxy
    }
 
 The upload defaults (``REQUIRE_SIGNED_URLS``, ``DEFAULT_EXPIRY_MINUTES``,
@@ -145,7 +149,7 @@ To receive real-time upload notifications, configure webhooks:
 
 .. code-block:: text
 
-   Webhook URL: https://yourdomain.com/cloudflare-images/webhook/
+   Webhook URL: https://yourdomain.com/cloudflare-images/api/webhook/
 
 Verification
 ------------

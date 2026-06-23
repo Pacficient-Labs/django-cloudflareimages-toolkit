@@ -14,6 +14,8 @@ from django_cloudflareimages_toolkit import (
     CloudflareImageTransform,
     CloudflareImageVariants,
     CloudflareImageUtils,
+    CloudflareImageURLFactory,
+    image_url_factory,
     ImageMetadataFactory,
     CloudflareImage,
     ImageUploadLog,
@@ -43,7 +45,7 @@ from django_cloudflareimages_toolkit import (
 Top-level metadata:
 
 ```python
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __author__ = "PacNPal"
 ```
 
@@ -75,7 +77,7 @@ Django-independent and exported eagerly from the package root.
 
 ## Lazy Import Contract
 
-`CloudflareImageTransform`, `CloudflareImageVariants`, `CloudflareImageUtils`, and `ImageMetadataFactory` are imported directly because they do not depend on Django settings or the ORM. Everything else is mapped by name in `__getattr__`:
+`CloudflareImageTransform`, `CloudflareImageVariants`, `CloudflareImageUtils`, `CloudflareImageURLFactory`, `image_url_factory`, and `ImageMetadataFactory` are imported directly because they do not depend on Django settings or the ORM. Everything else is mapped by name in `__getattr__`:
 
 ```python
 def __getattr__(name):

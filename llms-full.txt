@@ -105,13 +105,13 @@ print(f"Upload URL: {image.upload_url}")
 print(f"Expires at: {image.expires_at}")
 print(f"Image ID: {image.id}")
 
-# Check image status
+# Check image status (returns the Cloudflare result dict; updates `image` in place)
 cloudflare_service.check_image_status(image)
 
-# Get image statistics
-stats = cloudflare_service.get_upload_statistics()
-print(f"Total uploads: {stats['total_uploads']}")
-print(f"Success rate: {stats['success_rate']}")
+# Per-user statistics come from the stats endpoint: GET <prefix>/api/stats/
+# (keys: total_images, uploaded_images, pending_images, draft_images,
+#  failed_images, expired_images, total_file_size, images_with_signed_urls,
+#  total_usages, orphaned_images).
 ```
 
 ### Image Transformations
@@ -146,7 +146,7 @@ srcset = CloudflareImageUtils.get_srcset(
 )
 
 # URL utilities
-is_cf_url = CloudflareImageUtils.is_cloudflare_url(image.public_url)
+is_cf_url = CloudflareImageUtils.is_cloudflare_image_url(image.public_url)
 image_id = CloudflareImageUtils.extract_image_id(image.public_url)
 ```
 
@@ -163,16 +163,16 @@ image_id = CloudflareImageUtils.extract_image_id(image.public_url)
 <!-- Custom transformations -->
 {% cf_image_transform image.public_url width=800 height=600 fit='cover' quality=85 %}
 
-<!-- Responsive images -->
-{% cf_responsive_img image.public_url "Alt text" "img-responsive" "320,640,1024" %}
-{% cf_picture image.public_url "Alt text" "responsive-img" 320 768 1200 %}
+<!-- Responsive images (string-returning tags; no template required) -->
+<img src="{% cf_responsive_image image.public_url 800 %}"
+     srcset="{% cf_srcset image.public_url '320,640,1024' %}"
+     sizes="(max-width: 768px) 100vw, 800px" alt="">
 
-<!-- Upload forms -->
-{% cf_upload_form %}
-{% cf_upload_form "my-upload-form" "custom-class" "Choose File" %}
-
-<!-- Image gallery -->
-{% cf_image_gallery user_images 4 250 %}
+<!-- NOTE: cf_responsive_img, cf_picture, cf_upload_form, and cf_image_gallery
+     are registered inclusion tags, but you must supply their templates under a
+     cloudflare_images/ template dir (cloudflare_images/responsive_image.html,
+     cloudflare_images/picture_element.html, cloudflare_images/upload_form.html,
+     cloudflare_images/image_gallery.html) — the package does not ship them. -->
 ```
 
 ### RESTful API
@@ -258,10 +258,10 @@ The main service class that handles all Cloudflare Images API interactions.
 **Key Methods**:
 - `create_direct_upload_url()`: Creates one-time upload URLs (resolves metadata/creator defaults + factory)
 - `register_uploaded_image()`: Verifies a client-supplied ID against Cloudflare, then persists it
-- `check_image_status()`: Checks and updates image status from Cloudflare
-- `get_upload_statistics()`: Retrieves upload statistics
+- `check_image_status()`: Checks and updates image status from Cloudflare (returns the result dict)
+- `list_images()` / `get_image()` / `update_image()` / `delete_image()`: List, fetch, update, and delete images
 - `validate_webhook_signature()`: Validates webhook HMAC signatures
-- `handle_webhook()`: Processes webhook notifications
+- `process_webhook()`: Processes webhook notifications (returns the updated image or None)
 
 #### Database Models
 
@@ -270,7 +270,7 @@ The main service class that handles all Cloudflare Images API interactions.
 - `cloudflare_id`: Unique Cloudflare image identifier
 - `user`: Optional foreign key to Django User model
 - `upload_url`: One-time upload URL
-- `public_url`: Public image URL (after upload)
+- `public_url`: Public image URL (read-only property, not a stored column)
 - `status`: Current status (pending, draft, uploaded, failed, expired)
 - `metadata`: JSON field for custom metadata
 - `variants`: JSON field for available variants
@@ -298,13 +298,13 @@ Fluent API for building transformation URLs with method chaining.
 - `fit(mode)`: Resize mode (scale-down, contain, cover, crop, pad)
 - `gravity(g)`: Crop/pad gravity (auto, left, right, top, bottom, etc.)
 - `quality(q)`: JPEG quality (1-100)
-- `format(f)`: Output format (auto, webp, avif, json)
-- `dpr(ratio)`: Device pixel ratio
+- `format(f)`: Output format (auto, webp, avif, jpeg, json)
+- `dpr(ratio)`: Device pixel ratio (1.0-3.0)
 - `sharpen(amount)`: Sharpening (0-10)
-- `blur(amount)`: Blur effect (0-250)
+- `blur(amount)`: Blur effect (1-250)
 - `brightness(amount)`: Brightness adjustment (-1 to 1)
 - `contrast(amount)`: Contrast adjustment (-1 to 1)
-- `gamma(amount)`: Gamma correction (0.5-2.2)
+- `gamma(amount)`: Gamma correction (0.1-9.9)
 - `background(color)`: Background color for pad fit
 - `border(width, color)`: Border around image
 - `rotate(degrees)`: Rotation (0, 90, 180, 270)
@@ -313,17 +313,20 @@ Fluent API for building transformation URLs with method chaining.
 #### API Views and Serializers
 
 **Views** (`django_cloudflareimages_toolkit/views.py`):
+- `CloudflareImageViewSet`: List/retrieve/update/delete images, plus actions
+  (`check_status`, `usages`, `orphans`, `logs`, `bulk_delete`, `bulk_status_check`,
+  `by_cloudflare_id`)
+- `ImageUsageViewSet`: Read-only browsing of image usage references
 - `CreateUploadURLView`: Creates direct upload URLs
-- `ImageListView`: Lists images with filtering and pagination
-- `ImageDetailView`: Retrieves individual image details
-- `CheckImageStatusView`: Checks image status from Cloudflare
 - `ImageStatsView`: Provides upload statistics
+- `CleanupExpiredView`: Marks expired upload URLs
 - `WebhookView`: Handles Cloudflare webhook notifications
 
 **Serializers** (`django_cloudflareimages_toolkit/serializers.py`):
-- `CreateUploadURLSerializer`: Validates upload URL creation requests
+- `ImageUploadRequestSerializer`: Validates upload URL creation requests
+- `ImageUploadResponseSerializer`: Serializes the upload URL response
 - `CloudflareImageSerializer`: Serializes image model data
-- `ImageStatsSerializer`: Serializes statistics data
+- `ImageStatusSerializer` / `ImageUsageSerializer` / `WebhookPayloadSerializer`: status, usage, and webhook payloads
 
 ### API Integration
 
@@ -431,43 +434,54 @@ async def create_upload_url_async(user, metadata):
 ### CloudflareImage Model
 
 ```sql
-CREATE TABLE django_cloudflareimages_toolkit_cloudflareimage (
+-- Real db_table is "cloudflare_images" (set via Meta.db_table).
+CREATE TABLE cloudflare_images (
     id UUID PRIMARY KEY,
-    cloudflare_id VARCHAR(255) UNIQUE,
-    user_id INTEGER REFERENCES auth_user(id),
-    upload_url TEXT,
-    public_url TEXT,
+    cloudflare_id VARCHAR(255) UNIQUE NOT NULL,
+    user_id <AUTH_USER_MODEL pk> NULL REFERENCES <auth_user_table>(id),
+    filename VARCHAR(255) NOT NULL,
+    original_filename VARCHAR(255) NOT NULL,
+    content_type VARCHAR(100) NOT NULL,
+    file_size INTEGER NULL,            -- PositiveIntegerField
+    upload_url VARCHAR(500) NOT NULL,
     status VARCHAR(20) NOT NULL,
-    metadata JSONB,
-    variants JSONB,
-    filename VARCHAR(255),
-    file_size BIGINT,
-    expires_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+    require_signed_urls BOOLEAN NOT NULL,
+    metadata JSONB NOT NULL,
+    creator VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    uploaded_at TIMESTAMPTZ NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    width INTEGER NULL,
+    height INTEGER NULL,
+    format VARCHAR(10) NOT NULL,
+    variants JSONB NOT NULL,
+    cloudflare_metadata JSONB NOT NULL,
+    last_referenced_at TIMESTAMPTZ NULL
+    -- public_url / thumbnail_url / is_ready / is_uploaded / is_expired are
+    -- read-only model properties, NOT columns.
 );
 
-CREATE INDEX idx_cloudflareimage_user_id ON django_cloudflareimages_toolkit_cloudflareimage(user_id);
-CREATE INDEX idx_cloudflareimage_status ON django_cloudflareimages_toolkit_cloudflareimage(status);
-CREATE INDEX idx_cloudflareimage_created_at ON django_cloudflareimages_toolkit_cloudflareimage(created_at);
-CREATE INDEX idx_cloudflareimage_expires_at ON django_cloudflareimages_toolkit_cloudflareimage(expires_at);
+CREATE INDEX cfimg_user_status_idx ON cloudflare_images(user_id, status);
+CREATE INDEX cfimg_status_created_idx ON cloudflare_images(status, created_at);
+CREATE INDEX cfimg_expires_idx ON cloudflare_images(expires_at);
 ```
 
 ### ImageUploadLog Model
 
 ```sql
-CREATE TABLE django_cloudflareimages_toolkit_imageuploadlog (
-    id SERIAL PRIMARY KEY,
-    image_id UUID NOT NULL REFERENCES django_cloudflareimages_toolkit_cloudflareimage(id),
+-- Real db_table is "cloudflare_image_logs".
+CREATE TABLE cloudflare_image_logs (
+    id BIGSERIAL PRIMARY KEY,
+    image_id UUID NOT NULL REFERENCES cloudflare_images(id),
     event_type VARCHAR(50) NOT NULL,
-    message TEXT,
-    data JSONB,
-    timestamp TIMESTAMP WITH TIME ZONE NOT NULL
+    message TEXT NOT NULL,
+    data JSONB NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX idx_imageuploadlog_image_id ON django_cloudflareimages_toolkit_imageuploadlog(image_id);
-CREATE INDEX idx_imageuploadlog_event_type ON django_cloudflareimages_toolkit_imageuploadlog(event_type);
-CREATE INDEX idx_imageuploadlog_timestamp ON django_cloudflareimages_toolkit_imageuploadlog(timestamp);
+CREATE INDEX cfimg_log_image_ts_idx ON cloudflare_image_logs(image_id, timestamp);
+CREATE INDEX cfimg_log_event_ts_idx ON cloudflare_image_logs(event_type, timestamp);
 ```
 
 ## Testing
@@ -507,8 +521,8 @@ uv run pytest --cov=django_cloudflareimages_toolkit --cov-report=html
 
 ### GitHub Actions Testing
 The package includes comprehensive CI/CD testing:
-- Python versions: 3.10, 3.11, 3.12, 3.13
-- Django versions: 4.2, 5.0, 5.1
+- Python versions: 3.10, 3.11, 3.12, 3.13, 3.14
+- Django versions: 4.2, 5.1, 5.2, 6.0
 - Code quality checks with Ruff and mypy
 - Automated testing on push and pull requests
 
@@ -634,9 +648,9 @@ from django_cloudflareimages_toolkit.services import cloudflare_service
 def health_check():
     """Basic health check for Cloudflare Images integration."""
     try:
-        # Test API connectivity
-        stats = cloudflare_service.get_upload_statistics()
-        return {'status': 'healthy', 'stats': stats}
+        # Test API connectivity with a tiny list call
+        cloudflare_service.list_images(per_page=1)
+        return {'status': 'healthy'}
     except Exception as e:
         return {'status': 'unhealthy', 'error': str(e)}
 ```
@@ -771,29 +785,25 @@ token (e.g. the uploader's id) before any row is created.
 
 #### check_image_status()
 ```python
-def check_image_status(image: CloudflareImage) -> CloudflareImage
+def check_image_status(image: CloudflareImage) -> dict[str, Any]
 ```
 
-Checks and updates image status from Cloudflare API.
+Checks the image against Cloudflare, updates the passed `CloudflareImage` in
+place (status, variants, metadata, …), and returns Cloudflare's raw `result`
+dict.
 
 **Parameters**:
 - `image`: CloudflareImage instance
 
-**Returns**: Updated CloudflareImage instance
+**Returns**: The Cloudflare `result` dict (the `image` argument is mutated in place)
 
-#### get_upload_statistics()
-```python
-def get_upload_statistics() -> Dict[str, Any]
-```
-
-Retrieves upload statistics and metrics.
-
-**Returns**: Dictionary with statistics:
-- `total_uploads`: Total number of uploads
-- `successful_uploads`: Number of successful uploads
-- `failed_uploads`: Number of failed uploads
-- `success_rate`: Success rate percentage
-- `pending_uploads`: Number of pending uploads
+#### Upload statistics (endpoint, not a service method)
+There is no `cloudflare_service` statistics method. Per-user statistics are
+served by `ImageStatsView` at `GET <prefix>/api/stats/`, returning:
+- `total_images`, `uploaded_images`, `pending_images`, `draft_images`,
+  `failed_images`, `expired_images`
+- `total_file_size`, `images_with_signed_urls`
+- `total_usages`, `orphaned_images`
 
 ### Template Tags Reference
 
@@ -825,12 +835,15 @@ Generates a hero image with cover fit and auto gravity.
 
 Generates a custom transformation URL with specified parameters.
 
-#### cf_responsive_img
+#### cf_responsive_img (inclusion tag — template required)
 ```django
-{% cf_responsive_img image_url alt_text css_class breakpoints %}
+{% cf_responsive_img image_url alt_text css_class widths %}
 ```
 
-Generates a responsive image with srcset and sizes attributes.
+Renders a responsive `<img>` via the `cloudflare_images/responsive_image.html`
+template. That template is **not shipped** by the package — you must add it to
+your project, or use the string-returning `cf_responsive_image` / `cf_srcset` /
+`cf_sizes` tags instead (no template required).
 
 ## Contributing
 
@@ -858,6 +871,19 @@ Generates a responsive image with srcset and sizes attributes.
 5. Address feedback and iterate
 
 ## Changelog
+
+### Version 1.1.1
+- Full documentation audit and corrections (see CHANGELOG.md)
+- Fixed over-long migration index names (Django models.E034); added
+  `0006_pin_index_names` so existing and fresh databases converge
+
+### Version 1.1.0
+- Image Usage Registry (SSOT): `ImageUsage` model, signals,
+  `register_usage`/`unregister_usage`, `reconcile_image_usage`, admin gallery,
+  usage-aware deletes
+- Configurable delivery URL + `CloudflareImageURLFactory` (`image_url_factory`)
+- Configurable upload defaults (`DEFAULT_METADATA`, `DEFAULT_CREATOR`), pluggable
+  `METADATA_FACTORY`, end-to-end Cloudflare `creator`, and `register_uploaded()`
 
 ### Version 1.0.0
 - Initial production release
@@ -890,7 +916,7 @@ MIT License - see LICENSE file for details.
 - **Django**: 4.2+
 - **Django REST Framework**: 3.14+
 - **Cloudflare Images**: Account and API token
-- **Dependencies**: requests, Pillow, python-dateutil
+- **Dependencies**: Django (>=4.2), djangorestframework (>=3.14), requests, Pillow
 
 ## Project Structure
 

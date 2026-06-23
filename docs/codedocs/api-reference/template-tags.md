@@ -33,7 +33,7 @@ Example:
 <img
   src="{% cf_responsive_image image.public_url 800 %}"
   srcset="{% cf_srcset image.public_url '320,640,1024' %}"
-  sizes="{% cf_sizes 'max-width: 768px:100vw,default:800' %}"
+  sizes="(max-width: 768px) 100vw, 800px"
   alt="Example"
 >
 ```
@@ -45,7 +45,7 @@ def cf_responsive_img(
     image_url: str,
     alt: str = "",
     css_class: str = "",
-    widths: str = "320,640,1024,1920",
+    widths: str = "320,640,1024",
     quality: int = 85,
     sizes: str = "100vw",
 ) -> dict: ...
@@ -63,7 +63,7 @@ def cf_upload_form(
     form_id: str = "cf-upload-form",
     css_class: str = "cf-upload-form",
     button_text: str = "Upload Image",
-    api_endpoint: str = "/api/cloudflare-images/upload-url/",
+    api_endpoint: str | None = None,  # defaults to reverse("cloudflare_images:create-upload-url")
 ) -> dict: ...
 
 def cf_image_gallery(images, columns: int = 3, thumbnail_size: int = 300) -> dict: ...
@@ -74,6 +74,7 @@ These tags return context dictionaries intended for templates such as `cloudflar
 ## Filters
 
 ```python
+def cfimg_status_color(status) -> str: ...
 def cf_is_cloudflare_url(url: str) -> bool: ...
 def cf_extract_id(url: str) -> str: ...
 def cf_validate_url(url: str) -> bool: ...

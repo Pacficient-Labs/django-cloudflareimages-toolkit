@@ -140,10 +140,18 @@ class CloudflareImage(models.Model):
     class Meta:
         db_table = "cloudflare_images"
         ordering = ["-created_at"]
+        # Index names are pinned (and kept <=30 chars so they pass Django's
+        # models.E034 check). Without explicit names, a newer Django's
+        # makemigrations computes a different auto-name than the one baked into
+        # migration 0001 and tries to write a spurious RenameIndex migration into
+        # the installed package (site-packages). Migration 0006 renames the
+        # original (auto-generated, over-long) 0001 index names to these.
         indexes = [
-            models.Index(fields=["user", "status"]),
-            models.Index(fields=["status", "created_at"]),
-            models.Index(fields=["expires_at"]),
+            models.Index(fields=["user", "status"], name="cfimg_user_status_idx"),
+            models.Index(
+                fields=["status", "created_at"], name="cfimg_status_created_idx"
+            ),
+            models.Index(fields=["expires_at"], name="cfimg_expires_idx"),
         ]
 
     def __str__(self) -> str:
@@ -314,9 +322,12 @@ class ImageUploadLog(models.Model):
     class Meta:
         db_table = "cloudflare_image_logs"
         ordering = ["-timestamp"]
+        # Names pinned and renamed by migration 0006 (see CloudflareImage.Meta).
         indexes = [
-            models.Index(fields=["image", "timestamp"]),
-            models.Index(fields=["event_type", "timestamp"]),
+            models.Index(fields=["image", "timestamp"], name="cfimg_log_image_ts_idx"),
+            models.Index(
+                fields=["event_type", "timestamp"], name="cfimg_log_event_ts_idx"
+            ),
         ]
 
     def __str__(self) -> str:
@@ -389,9 +400,12 @@ class ImageUsage(models.Model):
                 name="uniq_image_usage_per_field",
             )
         ]
+        # Names pinned and renamed by migration 0006 (see CloudflareImage.Meta).
         indexes = [
-            models.Index(fields=["content_type", "object_id"]),
-            models.Index(fields=["cloudflare_id"]),
+            models.Index(
+                fields=["content_type", "object_id"], name="cfimg_usage_ct_obj_idx"
+            ),
+            models.Index(fields=["cloudflare_id"], name="cfimg_usage_cfid_idx"),
         ]
 
     def __str__(self) -> str:

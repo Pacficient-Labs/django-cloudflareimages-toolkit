@@ -325,7 +325,7 @@ Cloudflare Dashboard Setup
 
 1. Go to your Cloudflare Images dashboard
 2. Navigate to the Webhooks section
-3. Add a new webhook with URL: ``https://yourdomain.com/cloudflare-images/webhook/``
+3. Add a new webhook with URL: ``https://yourdomain.com/cloudflare-images/api/webhook/``
 4. Set the webhook secret in your Django settings
 
 Webhook Security

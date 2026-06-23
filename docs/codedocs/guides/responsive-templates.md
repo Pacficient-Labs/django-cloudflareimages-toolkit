@@ -35,7 +35,7 @@ These tags are wrappers over `CloudflareImageVariants.thumbnail()` and `Cloudfla
   <img
     src="{% cf_responsive_image image.public_url 800 %}"
     srcset="{% cf_srcset image.public_url '320,640,1024,1600' %}"
-    sizes="{% cf_sizes 'max-width: 768px:100vw,default:800' %}"
+    sizes="(max-width: 768px) 100vw, 800px"
     alt="Catalog image"
   >
 {% endif %}

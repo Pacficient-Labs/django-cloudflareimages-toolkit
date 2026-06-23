@@ -113,4 +113,4 @@ def create_product(request):
     return render(request, "products/create.html", {"form": form})
 ```
 
-<Callout type="warn">The widget fallback JavaScript in `django_cloudflareimages_toolkit/widgets.py` assumes endpoints such as `/cloudflare-images/get-upload-url/` and `/cloudflare-images/image/<id>/thumbnail/`, but the packaged URLs are actually under `/cloudflare-images/api/...`. In production, override the widget template or subclass the widget so the frontend calls your real upload and preview endpoints.</Callout>
+<Callout type="info">The widget resolves its upload endpoint from the named route `cloudflare_images:create-upload-url` (i.e. `<prefix>/api/upload-url/`) via `reverse()`, so it stays correct wherever you mount the package URLs. If the API routes are not mounted, the endpoint resolves to an empty string and the JavaScript surfaces a clear "endpoint not configured" error. Mount `django_cloudflareimages_toolkit.urls` (see the Quick Start) for the widget to work.</Callout>
