@@ -1,0 +1,51 @@
+/**
+ * Styling for CloudflareImageWidget.
+ *
+ * Loaded via the widget's Media (form media). Previously these rules were
+ * inlined as a Python string in widgets.py::_render_fallback; they live here so
+ * the markup, behaviour, and styling are each defined exactly once.
+ */
+.cloudflare-image-upload-container {
+  border: 2px dashed #ccc;
+  border-radius: 4px;
+  padding: 20px;
+  text-align: center;
+  margin: 10px 0;
+}
+
+.cloudflare-image-preview img {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.cloudflare-image-progress {
+  margin-top: 10px;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: #f0f0f0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar::after {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #007cba;
+  animation: cfimg-progress 2s infinite;
+}
+
+@keyframes cfimg-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
