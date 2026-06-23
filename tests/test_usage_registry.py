@@ -176,6 +176,27 @@ class TestReconcile:
         call_command("reconcile_image_usage", "--dry-run")
         assert ImageUsage.objects.count() == 0
 
+    def test_dry_run_count_matches_real_run_with_overlap(self):
+        # A row that is BOTH stale (main loop: object_id has no current value)
+        # and dangling (its owner no longer exists) must be counted once, so
+        # dry-run and the real run report the same delete total. Codex PR #20.
+        ct = ContentType.objects.get_for_model(Product)
+        ImageUsage.objects.create(
+            content_type=ct,
+            object_id="424242",  # no such Product -> dangling
+            field_name="image",  # a tracked field -> also "stale" in main loop
+            cloudflare_id="cf-ghost",
+            source=ImageUsage.SOURCE_AUTO,
+        )
+
+        dry = _call_with_output("reconcile_image_usage", "--dry-run")
+        assert "remove 1 stale row(s)" in dry
+        assert ImageUsage.objects.count() == 1  # dry-run didn't touch it
+
+        real = _call_with_output("reconcile_image_usage")
+        assert "remove 1 stale row(s)" in real
+        assert ImageUsage.objects.count() == 0
+
     def test_prunes_dangling_rows(self):
         # A usage row whose owning object no longer exists (e.g. owner deleted
         # via a signal-bypassing path) is pruned by reconcile.
@@ -352,6 +373,50 @@ class TestSourceMarker:
 
 
 @pytest.mark.django_db
+class TestLegacyMigration:
+    """Migration 0005 protects legacy custom-label manual rows (Codex PR #20)."""
+
+    def test_reclassifies_legacy_manual_rows(self):
+        from importlib import import_module
+        from types import SimpleNamespace
+
+        from django.apps import apps as global_apps
+
+        migration = import_module(
+            "django_cloudflareimages_toolkit.migrations."
+            "0005_backfill_last_referenced_at"
+        )
+
+        # A legacy custom-label manual row: created via register_usage(...,
+        # field_name="hero") before the source column existed, so it defaulted
+        # to "auto" and its field isn't a tracked CloudflareImageField.
+        plain = Plain.objects.create(name="x")
+        ct = ContentType.objects.get_for_model(Plain)
+        legacy = ImageUsage.objects.create(
+            content_type=ct,
+            object_id=str(plain.pk),
+            field_name="hero",
+            cloudflare_id="cf-legacy",
+            source=ImageUsage.SOURCE_AUTO,
+        )
+        # A genuine auto row for a tracked field must stay "auto".
+        product = Product.objects.create(image="cf-auto")
+
+        editor = SimpleNamespace(connection=SimpleNamespace(alias="default"))
+        migration.backfill_registry_bookkeeping(global_apps, editor)
+
+        legacy.refresh_from_db()
+        assert legacy.source == ImageUsage.SOURCE_MANUAL
+
+        auto_row = ImageUsage.objects.get(object_id=str(product.pk), field_name="image")
+        assert auto_row.source == ImageUsage.SOURCE_AUTO
+
+        # And the reclassified legacy row now survives reconcile.
+        call_command("reconcile_image_usage")
+        assert ImageUsage.objects.filter(pk=legacy.pk).exists()
+
+
+@pytest.mark.django_db
 class TestDryRunCounting:
     """``--dry-run`` must report what a real run would prune (Codex finding #2)."""
 
@@ -492,44 +557,33 @@ class TestLastReferencedBookkeeping:
 
 @pytest.mark.django_db
 class TestManualLabelCollision:
-    """A manual row whose label collides with a tracked field is safe."""
+    """register_usage rejects labels that collide with a tracked field."""
 
-    def test_manual_row_with_tracked_field_label_survives_reconcile(self):
-        # Codex finding (PR #20): the main reconcile loop selected/deleted by
-        # ``(content_type, field_name)`` without honouring ``source``. A manual
-        # row with ``field_name="image"`` would be wiped whenever the actual
-        # ``product.image`` was empty.
+    def test_register_usage_rejects_tracked_field_label(self):
+        # Codex finding (PR #20): usage rows are unique on
+        # (content_type, object_id, field_name), so a manual row whose label
+        # matches a tracked CloudflareImageField would share the auto row's
+        # slot and the two references would clobber each other. The collision
+        # is rejected up front instead.
         product = Product.objects.create(name="p")  # image is blank
-        register_usage(product, "cf-manual-collide", field_name="image")
-        assert (
-            ImageUsage.objects.filter(
-                object_id=str(product.pk),
-                field_name="image",
-                source=ImageUsage.SOURCE_MANUAL,
-            ).count()
-            == 1
-        )
+        with pytest.raises(ValueError, match="collides with the tracked"):
+            register_usage(product, "cf-manual-collide", field_name="image")
+        # Nothing was written for the colliding label.
+        assert not ImageUsage.objects.filter(
+            object_id=str(product.pk), field_name="image"
+        ).exists()
 
-        call_command("reconcile_image_usage")
-
-        rows = ImageUsage.objects.filter(object_id=str(product.pk), field_name="image")
-        assert rows.count() == 1
-        assert rows.first().source == ImageUsage.SOURCE_MANUAL
-
-    def test_manual_row_not_overwritten_when_field_also_set(self):
-        # If both the manual row AND the tracked field have a value, the
-        # manual row should not be silently overwritten back to ``source="auto"``
-        # by a reconcile pass.
+    def test_distinct_manual_label_coexists_with_tracked_field(self):
+        # A non-colliding manual label lives alongside the auto-tracked row and
+        # both survive reconcile.
         product = Product.objects.create(image="cf-auto")
-        # Sneak in a manual row by replacing the auto one's source/value.
-        # (Production callers would normally pick a different field_name, but
-        # the safety property here is what's under test.)
-        ImageUsage.objects.filter(object_id=str(product.pk), field_name="image").update(
-            source=ImageUsage.SOURCE_MANUAL, cloudflare_id="cf-manual"
-        )
+        register_usage(product, "cf-manual", field_name="gallery")
+        assert usages_for(product).count() == 2
 
         call_command("reconcile_image_usage")
 
-        row = ImageUsage.objects.get(object_id=str(product.pk), field_name="image")
-        assert row.source == ImageUsage.SOURCE_MANUAL
-        assert row.cloudflare_id == "cf-manual"
+        rows = {u.field_name: u for u in usages_for(product)}
+        assert rows["image"].source == ImageUsage.SOURCE_AUTO
+        assert rows["image"].cloudflare_id == "cf-auto"
+        assert rows["gallery"].source == ImageUsage.SOURCE_MANUAL
+        assert rows["gallery"].cloudflare_id == "cf-manual"

@@ -42,6 +42,16 @@ Release notes are also published on
     in both the stale-delete pass and the upsert), so a manual row whose
     `field_name` collides with a tracked field is no longer wiped or
     re-classified as `source="auto"`.
+  - **Second-review follow-ups:** the `0005` data migration now also reclassifies
+    legacy custom-label manual rows (any pre-existing row whose
+    `(content_type, field_name)` isn't a discovered field) to `source="manual"`,
+    so upgrades don't prune them. `register_usage` raises `ValueError` if
+    `field_name` collides with a tracked `CloudflareImageField` (they would share
+    a uniqueness slot). `reconcile_image_usage` now computes a deduplicated set of
+    rows to delete, so `--dry-run` and the real run report identical counts even
+    when a row is both stale and dangling. `?metadata__<key>=...` filters accept
+    non-identifier JSON keys (hyphens, dots, nested) and return **400** for a
+    reserved lookup operator instead of silently dropping the filter or 500-ing.
 
 ### Added
 

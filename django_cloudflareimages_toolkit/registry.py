@@ -226,12 +226,26 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
         obj: Any saved model instance that "owns" the reference.
         cloudflare_id: The Cloudflare image ID being referenced.
         field_name: A label distinguishing this reference from others on the same
-            object (defaults to ``"manual"``).
+            object (defaults to ``"manual"``). It must NOT match the name of a
+            ``CloudflareImageField`` declared on ``obj``'s model: usage rows are
+            unique on ``(content_type, object_id, field_name)``, so a colliding
+            label would share a row with the auto-tracked field and the two
+            references would overwrite each other.
 
     Returns:
         The created or updated :class:`~...models.ImageUsage` row.
+
+    Raises:
+        ValueError: If ``field_name`` collides with a tracked field on the model.
     """
     model = type(obj)
+    tracked = get_tracked_field_names(model)
+    if field_name in tracked:
+        raise ValueError(
+            f"field_name {field_name!r} collides with the tracked "
+            f"CloudflareImageField of the same name on {model._meta.label}. "
+            f"Pick a distinct label for the manual reference."
+        )
     using = obj._state.db
     content_type = _content_type_for(model, using=using)
     usage = record_usage(

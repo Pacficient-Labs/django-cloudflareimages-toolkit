@@ -272,19 +272,27 @@ class TestApiLookupExtras:
         assert resp.data["cloudflare_id"] == "products/123/hero"
 
     def test_metadata_filter_rejects_reserved_lookup(self, api, user):
-        # ``metadata__contains=x`` would otherwise invoke the JSON ``contains``
-        # lookup (unsupported on SQLite → 500). It must be quietly ignored.
+        # ``metadata__contains=x`` would invoke the JSON ``contains`` lookup
+        # (unsupported on SQLite → 500). It must be rejected as a 400, not
+        # silently dropped (which would misleadingly broaden the result set).
         make_image("cf-1", user)
         resp = api.get(f"{API}/images/", {"metadata__contains": "anything"})
-        assert resp.status_code == 200
-        # Filter was ignored; the image still shows up.
-        ids = [row["cloudflare_id"] for row in resp.data["results"]]
-        assert ids == ["cf-1"]
+        assert resp.status_code == 400
 
     def test_metadata_filter_accepts_simple_key(self, api, user):
         make_image("cf-a", user, metadata={"kind": "avatar"})
         make_image("cf-b", user, metadata={"kind": "banner"})
         resp = api.get(f"{API}/images/", {"metadata__kind": "avatar"})
+        assert resp.status_code == 200
+        ids = [row["cloudflare_id"] for row in resp.data["results"]]
+        assert ids == ["cf-a"]
+
+    def test_metadata_filter_accepts_non_identifier_key(self, api, user):
+        # Valid JSON keys aren't all Python identifiers (hyphens, dots). They
+        # must still be queryable, not silently dropped.
+        make_image("cf-a", user, metadata={"user-id": "123"})
+        make_image("cf-b", user, metadata={"user-id": "456"})
+        resp = api.get(f"{API}/images/", {"metadata__user-id": "123"})
         assert resp.status_code == 200
         ids = [row["cloudflare_id"] for row in resp.data["results"]]
         assert ids == ["cf-a"]

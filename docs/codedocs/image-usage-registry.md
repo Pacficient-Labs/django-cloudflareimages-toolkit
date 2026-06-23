@@ -72,12 +72,15 @@ register_usage(obj, "other-id", field_name="hero")    # distinguish multiple ref
 unregister_usage(obj)
 ```
 
-Manual rows are tagged with `source="manual"` on `ImageUsage`. Reconcile
-preserves them regardless of `field_name` — including labels that collide with
-a real `CloudflareImageField` (e.g. `register_usage(product, ..., field_name="image")`
-on a `Product` whose `image` field is also tracked). For clarity, prefer a
-label that does not collide with a tracked field; the safety property is there
-mostly to keep upgrades and refactors from quietly losing references.
+Manual rows are tagged with `source="manual"` on `ImageUsage` and reconcile
+preserves them regardless of `field_name`.
+
+> **The `field_name` must not match a `CloudflareImageField` on the model.**
+> Usage rows are unique on `(content_type, object_id, field_name)`, so a manual
+> label that collides with a tracked field name would share the *same row* as
+> the auto-tracked reference — the two would overwrite each other. `register_usage`
+> raises `ValueError` if you pass a colliding label. Use a distinct label (the
+> default `"manual"` is always safe).
 
 ## Reverse lookups
 

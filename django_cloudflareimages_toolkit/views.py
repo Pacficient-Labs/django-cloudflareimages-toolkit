@@ -8,7 +8,9 @@ transformations, and management operations.
 import json
 import logging
 
+from django.core.exceptions import FieldError
 from django.db.models import Q
+from django.db.utils import NotSupportedError
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
@@ -140,18 +142,25 @@ class CloudflareImageViewSet(ModelViewSet):
         if "orphaned" in params and filters.get("orphaned"):
             queryset = queryset.filter(usages__isnull=True)
 
-        # Dynamic metadata lookups: ?metadata__<key>=<value>. The key is treated
-        # as a JSON top-level key, not a Django field lookup, so we only accept
-        # simple identifiers and reject names that collide with JSONField
-        # lookups (e.g. ``contains``, which would otherwise invoke an unsupported
-        # JSON lookup on SQLite and 500 the list view).
+        # Dynamic metadata lookups: ?metadata__<key>=<value>. The trailing
+        # segment is treated as a JSON key (which may contain hyphens, dots, or
+        # be nested via ``__``), not a Django field lookup. We reject only the
+        # final segment matching a JSONField lookup operator (e.g. ``contains``,
+        # which would 500 on SQLite) so a stray operator surfaces as a clean 400
+        # instead of being silently dropped or crashing.
         for param, value in params.items():
             if not param.startswith("metadata__"):
                 continue
-            key = param[len("metadata__") :]
-            if not key.isidentifier() or key in _RESERVED_JSON_LOOKUPS:
-                continue
-            queryset = queryset.filter(**{param: value})
+            if param.rsplit("__", 1)[-1] in _RESERVED_JSON_LOOKUPS:
+                raise DRFValidationError(
+                    {param: "Unsupported metadata lookup operator."}
+                )
+            try:
+                queryset = queryset.filter(**{param: value})
+            except (FieldError, NotSupportedError) as exc:
+                raise DRFValidationError(
+                    {param: "Unsupported metadata lookup."}
+                ) from exc
 
         return queryset.distinct()
 

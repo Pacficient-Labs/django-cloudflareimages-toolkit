@@ -40,7 +40,12 @@ class Command(BaseCommand):
         registry = get_models_with_image_fields(refresh=True)
 
         upserts = 0
-        deletes = 0
+        # Collect the PKs of every row that should be removed across all three
+        # phases into one set, so the reported count is deduplicated and a
+        # dry-run reports exactly what a real run would delete (a row that is
+        # both "stale" in the main loop and "dangling"/"undiscovered" is counted
+        # once). Deletion happens once at the end.
+        to_delete: set = set()
 
         # Stable iteration order keeps the operation deterministic.
         for model in sorted(registry, key=lambda m: m._meta.label):
@@ -72,13 +77,10 @@ class Command(BaseCommand):
                         source=ImageUsage.SOURCE_MANUAL,
                     ).values_list("object_id", flat=True)
                 )
-                existing_ids = set(
-                    ImageUsage.objects.filter(
-                        content_type=content_type, field_name=field_name
-                    )
-                    .exclude(source=ImageUsage.SOURCE_MANUAL)
-                    .values_list("object_id", flat=True)
-                )
+                auto_rows = ImageUsage.objects.filter(
+                    content_type=content_type, field_name=field_name
+                ).exclude(source=ImageUsage.SOURCE_MANUAL)
+                existing_ids = set(auto_rows.values_list("object_id", flat=True))
                 stale = existing_ids - set(current)
                 actionable_current = {
                     oid: cid
@@ -87,7 +89,12 @@ class Command(BaseCommand):
                 }
 
                 upserts += len(actionable_current)
-                deletes += len(stale)
+                if stale:
+                    to_delete.update(
+                        auto_rows.filter(object_id__in=stale).values_list(
+                            "pk", flat=True
+                        )
+                    )
 
                 if not dry_run:
                     with transaction.atomic():
@@ -95,21 +102,16 @@ class Command(BaseCommand):
                             record_usage(
                                 content_type, object_id, field_name, cloudflare_id
                             )
-                        if stale:
-                            ImageUsage.objects.filter(
-                                content_type=content_type,
-                                field_name=field_name,
-                                object_id__in=stale,
-                            ).exclude(source=ImageUsage.SOURCE_MANUAL).delete()
 
-        # Both prune passes participate in the delete count for dry-run so the
-        # reported total matches what a real run would remove.
-        deletes += self._prune_undiscovered_fields(registry, dry_run=dry_run)
-        deletes += self._prune_dangling(dry_run=dry_run)
+        to_delete |= self._undiscovered_field_pks(registry)
+        to_delete |= self._dangling_pks()
+
         if not dry_run:
+            if to_delete:
+                ImageUsage.objects.filter(pk__in=to_delete).delete()
             self._backfill_images()
 
-        self._report(dry_run, upserts, deletes)
+        self._report(dry_run, upserts, len(to_delete))
 
     @staticmethod
     def _auto_rows():
@@ -124,8 +126,8 @@ class Command(BaseCommand):
             field_name=MANUAL_FIELD_NAME
         )
 
-    def _prune_undiscovered_fields(self, registry, dry_run: bool = False) -> int:
-        """Drop auto-tracked rows for fields no longer in the registry.
+    def _undiscovered_field_pks(self, registry) -> set:
+        """PKs of auto rows for fields no longer in the registry.
 
         Covers renamed/removed ``CloudflareImageField``s (their old usage rows
         would otherwise keep their images looking in-use forever). Rows whose
@@ -137,27 +139,27 @@ class Command(BaseCommand):
             for field_name in fields
         }
         auto = self._auto_rows()
-        seen_pairs = auto.values_list("content_type", "field_name").distinct()
-        removed = 0
-        for content_type_id, field_name in seen_pairs:
+        pks: set = set()
+        for content_type_id, field_name in auto.values_list(
+            "content_type", "field_name"
+        ).distinct():
             if (content_type_id, field_name) in discovered:
                 continue
-            qs = auto.filter(content_type_id=content_type_id, field_name=field_name)
-            if dry_run:
-                removed += qs.count()
-            else:
-                count, _ = qs.delete()
-                removed += count
-        return removed
+            pks.update(
+                auto.filter(
+                    content_type_id=content_type_id, field_name=field_name
+                ).values_list("pk", flat=True)
+            )
+        return pks
 
-    def _prune_dangling(self, dry_run: bool = False) -> int:
-        """Delete usage rows whose owning object no longer exists.
+    def _dangling_pks(self) -> set:
+        """PKs of usage rows whose owning object no longer exists.
 
         Covers manually-registered owners and removed models/objects that bypass
         the post_delete signal, so a deleted owner can't keep an image looking
         in-use. Grouped by content type to avoid per-row object lookups.
         """
-        removed = 0
+        pks: set = set()
         content_type_ids = (
             ImageUsage.objects.values_list("content_type", flat=True)
             .distinct()
@@ -169,19 +171,13 @@ class Command(BaseCommand):
             model = content_type.model_class()
             if model is None:
                 # The model (or its app) was removed entirely.
-                removed += rows.count()
-                if not dry_run:
-                    rows.delete()
+                pks.update(rows.values_list("pk", flat=True))
                 continue
             existing = {
                 str(pk) for pk in model._base_manager.values_list("pk", flat=True)
             }
-            stale_pks = [row.pk for row in rows if row.object_id not in existing]
-            if stale_pks:
-                removed += len(stale_pks)
-                if not dry_run:
-                    ImageUsage.objects.filter(pk__in=stale_pks).delete()
-        return removed
+            pks.update(row.pk for row in rows if row.object_id not in existing)
+        return pks
 
     def _backfill_images(self):
         """Link any unlinked usages to a now-existing CloudflareImage record."""
