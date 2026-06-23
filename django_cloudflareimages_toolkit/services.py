@@ -668,41 +668,57 @@ class CloudflareImagesService:
         """
         Process webhook payload from Cloudflare.
 
+        Returns the updated ``CloudflareImage`` when the payload matches a known
+        image, or ``None`` only for the genuine *unknown image* case — a missing
+        id or no matching local row. The caller (``WebhookView``) maps ``None``
+        to a 404.
+
+        Crucially, this does NOT swallow unexpected errors. A transient failure
+        (e.g. a DB hiccup, or a save error inside
+        ``update_from_cloudflare_response``) is allowed to propagate so the
+        view's existing 500 path runs and Cloudflare retries delivery. The
+        previous catch-all ``except Exception: return None`` reported such
+        recoverable errors as a 404 ("no such image, don't retry") — the
+        opposite of what idempotent webhook delivery needs, and it made the
+        view's 500 branch unreachable.
+
         Args:
             payload: Webhook payload data
 
         Returns:
-            Updated CloudflareImage instance if found
+            Updated CloudflareImage instance, or None if the image is unknown.
+
+        Raises:
+            Exception: Any unexpected error while processing a known image is
+                propagated to the caller (surfaced as a 500 so Cloudflare
+                retries).
         """
-        try:
-            image_id = payload.get("id")
-            if not image_id:
-                logger.warning("Webhook payload missing image ID")
-                return None
-
-            try:
-                image = CloudflareImage.objects.get(cloudflare_id=image_id)
-            except CloudflareImage.DoesNotExist:
-                logger.warning(f"Received webhook for unknown image: {image_id}")
-                return None
-
-            # Update image from webhook data
-            image.update_from_cloudflare_response(payload)
-
-            # Log the webhook
-            ImageUploadLog.objects.create(
-                image=image,
-                event_type="webhook_received",
-                message="Webhook processed successfully",
-                data={"payload": payload},
-            )
-
-            logger.info(f"Processed webhook for image {image.cloudflare_id}")
-            return image
-
-        except Exception as e:
-            logger.error(f"Failed to process webhook: {str(e)}")
+        image_id = payload.get("id")
+        if not image_id:
+            logger.warning("Webhook payload missing image ID")
             return None
+
+        try:
+            image = CloudflareImage.objects.get(cloudflare_id=image_id)
+        except CloudflareImage.DoesNotExist:
+            logger.warning(f"Received webhook for unknown image: {image_id}")
+            return None
+
+        # Update image from webhook data. Any error here (e.g. a transient DB
+        # failure) propagates to the view's 500 path so Cloudflare retries —
+        # it is deliberately NOT caught and reported as an unknown image.
+        image.update_from_cloudflare_response(payload)
+
+        # Log the webhook
+        ImageUploadLog.objects.create(
+            image=image,
+            event_type="webhook_received",
+            message="Webhook processed successfully",
+            data={"payload": payload},
+        )
+
+        logger.info(f"Processed webhook for image {image.cloudflare_id}")
+        return image
 
 
 # Global service instance
