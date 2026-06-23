@@ -105,8 +105,7 @@ class Command(BaseCommand):
         # are no-ops); ``deletes`` counts only genuinely stale rows removed.
         self.stdout.write(
             self.style.SUCCESS(
-                f"{prefix} track {upserts} reference(s), "
-                f"remove {deletes} stale row(s)."
+                f"{prefix} track {upserts} reference(s), remove {deletes} stale row(s)."
             )
         )
 
