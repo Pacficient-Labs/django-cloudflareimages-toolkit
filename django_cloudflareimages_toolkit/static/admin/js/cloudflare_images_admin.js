@@ -5,30 +5,12 @@
 (function($) {
     'use strict';
 
-    // Check status function for individual images
-    window.checkStatus = function(imageId) {
-        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
-        
-        fetch(`/admin/django_cloudflare_images/cloudflareimage/${imageId}/check_status/`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': csrfToken,
-            },
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                location.reload();
-            } else {
-                alert('Failed to check status: ' + (data.error || 'Unknown error'));
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Failed to check status');
-        });
-    };
+    // NOTE: a per-row status-check helper used to live here. It posted to an
+    // admin URL built with the wrong app label and a route that was never
+    // registered, so it always 404'd. Per-image status checks are available
+    // through the existing bulk admin action ("Check status from Cloudflare"),
+    // so that dead helper -- and the inline button that invoked it -- have been
+    // removed rather than repointed at another hardcoded URL. See issue #22.
 
     // Auto-refresh functionality for pending/draft images
     function autoRefreshStatus() {

@@ -6,6 +6,7 @@ Cloudflare Images transformations and utilities in templates.
 """
 
 from django import template
+from django.urls import NoReverseMatch, reverse
 
 from ..models import CloudflareImage
 from ..transformations import (
@@ -344,14 +345,26 @@ def cf_upload_form(
     form_id: str = "cf-upload-form",
     css_class: str = "cf-upload-form",
     button_text: str = "Upload Image",
-    api_endpoint: str = "/api/cloudflare-images/upload-url/",
+    api_endpoint: str | None = None,
 ) -> dict:
     """
     Render an image upload form with JavaScript integration.
 
+    ``api_endpoint`` defaults to the named upload route
+    (``cloudflare_images:create-upload-url``) resolved via ``reverse()`` so the
+    single source of truth for that URL is its ``path()`` definition — renaming
+    or remounting the URLs propagates here automatically, rather than drifting
+    from a hardcoded string. Pass an explicit value to override; if the API URLs
+    aren't mounted it falls back to an empty string.
+
     Usage:
         {% cf_upload_form "my-upload-form" "custom-class" "Choose Image" %}
     """
+    if api_endpoint is None:
+        try:
+            api_endpoint = reverse("cloudflare_images:create-upload-url")
+        except NoReverseMatch:
+            api_endpoint = ""
     return {
         "form_id": form_id,
         "css_class": css_class,
