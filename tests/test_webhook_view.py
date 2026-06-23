@@ -74,9 +74,7 @@ class TestWebhookSignatureGate:
         validation. Regression-locked here.
         """
         body = json.dumps({"event": "test"}).encode()
-        response = client.post(
-            WEBHOOK_URL, data=body, content_type="application/json"
-        )
+        response = client.post(WEBHOOK_URL, data=body, content_type="application/json")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_invalid_signature_with_secret_set_returns_401(
@@ -123,9 +121,7 @@ class TestWebhookPayloadValidation:
     """Deployments that haven't configured a secret accept any payload —
     we still need to fail cleanly on garbage input."""
 
-    def test_invalid_payload_returns_400_not_500(
-        self, client: Client, disabled_secret
-    ):
+    def test_invalid_payload_returns_400_not_500(self, client: Client, disabled_secret):
         """Malformed payload = 400, NOT 500.
 
         WebhookPayloadSerializer.is_valid(raise_exception=True) raises
@@ -136,9 +132,7 @@ class TestWebhookPayloadValidation:
         # ``{"event": "test"}`` lacks the required ``id`` field and will
         # fail serializer validation.
         body = json.dumps({"event": "test"}).encode()
-        response = client.post(
-            WEBHOOK_URL, data=body, content_type="application/json"
-        )
+        response = client.post(WEBHOOK_URL, data=body, content_type="application/json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_invalid_json_returns_400(self, client: Client, disabled_secret):

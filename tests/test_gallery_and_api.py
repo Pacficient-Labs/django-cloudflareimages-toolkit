@@ -231,3 +231,68 @@ class TestAdminGallery:
         resp = admin_client.get(url, {"unregistered": "1"})
         assert resp.status_code == 200
         assert b"cf-no-record" in resp.content
+
+    def test_imageusage_admin_blocks_deletion(self, admin_client, user):
+        # Codex finding #6: the registry admin must not let staff delete rows
+        # (which would silently make still-referenced images look orphaned).
+        make_image("cf-1", user)
+        Product.objects.create(image="cf-1")
+        from django_cloudflareimages_toolkit.models import ImageUsage
+
+        usage = ImageUsage.objects.get()
+
+        # Default delete-selected action must not be available.
+        list_url = reverse(
+            "admin:django_cloudflareimages_toolkit_imageusage_changelist"
+        )
+        list_resp = admin_client.get(list_url)
+        assert b'<option value="delete_selected"' not in list_resp.content
+
+        # Direct delete view must be refused.
+        delete_url = reverse(
+            "admin:django_cloudflareimages_toolkit_imageusage_delete",
+            args=[usage.pk],
+        )
+        resp = admin_client.get(delete_url)
+        assert resp.status_code in (302, 403)  # admin redirects forbidden views
+        assert ImageUsage.objects.filter(pk=usage.pk).exists()
+
+
+@pytest.mark.django_db
+class TestApiLookupExtras:
+    """Codex findings #3 (path-style ids) and #4 (metadata filter safety)."""
+
+    def test_lookup_by_path_style_cloudflare_id(self, api, user):
+        # Cloudflare custom IDs can contain slashes (e.g. ``products/123/hero``).
+        # The lookup route must accept them; otherwise such images would be
+        # unreachable through this endpoint.
+        make_image("products/123/hero", user)
+        resp = api.get(f"{API}/images/by-cloudflare-id/products/123/hero/")
+        assert resp.status_code == 200
+        assert resp.data["cloudflare_id"] == "products/123/hero"
+
+    def test_metadata_filter_rejects_reserved_lookup(self, api, user):
+        # ``metadata__contains=x`` would invoke the JSON ``contains`` lookup
+        # (unsupported on SQLite → 500). It must be rejected as a 400, not
+        # silently dropped (which would misleadingly broaden the result set).
+        make_image("cf-1", user)
+        resp = api.get(f"{API}/images/", {"metadata__contains": "anything"})
+        assert resp.status_code == 400
+
+    def test_metadata_filter_accepts_simple_key(self, api, user):
+        make_image("cf-a", user, metadata={"kind": "avatar"})
+        make_image("cf-b", user, metadata={"kind": "banner"})
+        resp = api.get(f"{API}/images/", {"metadata__kind": "avatar"})
+        assert resp.status_code == 200
+        ids = [row["cloudflare_id"] for row in resp.data["results"]]
+        assert ids == ["cf-a"]
+
+    def test_metadata_filter_accepts_non_identifier_key(self, api, user):
+        # Valid JSON keys aren't all Python identifiers (hyphens, dots). They
+        # must still be queryable, not silently dropped.
+        make_image("cf-a", user, metadata={"user-id": "123"})
+        make_image("cf-b", user, metadata={"user-id": "456"})
+        resp = api.get(f"{API}/images/", {"metadata__user-id": "123"})
+        assert resp.status_code == 200
+        ids = [row["cloudflare_id"] for row in resp.data["results"]]
+        assert ids == ["cf-a"]

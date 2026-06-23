@@ -91,6 +91,7 @@ This model tracks one Cloudflare upload slot or uploaded image.
 | `width` | `PositiveIntegerField` | `None` | Stored image width. |
 | `height` | `PositiveIntegerField` | `None` | Stored image height. |
 | `format` | `CharField` | `""` | Stored image format. |
+| `last_referenced_at` | `DateTimeField` | `None` | Bumped each time the registry records a reference; drives orphan-cleanup retention so an image is judged on time-since-unused, not time-since-upload. `None` falls back to `created_at`. |
 
 ### Properties
 
@@ -164,7 +165,8 @@ Reverse index mapping each image to the content that references it. See the
 | `content_type` | `ForeignKey[ContentType]` | — | Model of the referencing object. |
 | `object_id` | `CharField` | — | PK of the referencing object (string, so int and UUID pks both work). |
 | `content_object` | `GenericForeignKey` | — | The referencing instance. |
-| `field_name` | `CharField` | — | Field holding the reference (e.g. `avatar`), or `manual`. |
+| `field_name` | `CharField` | — | Field holding the reference (e.g. `avatar`), or a caller-supplied label for manual rows. |
+| `source` | `CharField` | `"auto"` | Origin marker. `"auto"` for rows derived from a `CloudflareImageField`; `"manual"` for rows from `register_usage()`. Manual rows survive reconcile regardless of `field_name`. |
 | `cloudflare_id` | `CharField` | — | Referenced Cloudflare image ID (the source of truth). |
 | `image` | `ForeignKey[CloudflareImage]` | `None` | Resolved image; `null` marks an unregistered reference. |
 | `created_at` / `updated_at` | `DateTimeField` | auto | Row timestamps. |

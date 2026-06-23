@@ -176,6 +176,27 @@ class TestReconcile:
         call_command("reconcile_image_usage", "--dry-run")
         assert ImageUsage.objects.count() == 0
 
+    def test_dry_run_count_matches_real_run_with_overlap(self):
+        # A row that is BOTH stale (main loop: object_id has no current value)
+        # and dangling (its owner no longer exists) must be counted once, so
+        # dry-run and the real run report the same delete total. Codex PR #20.
+        ct = ContentType.objects.get_for_model(Product)
+        ImageUsage.objects.create(
+            content_type=ct,
+            object_id="424242",  # no such Product -> dangling
+            field_name="image",  # a tracked field -> also "stale" in main loop
+            cloudflare_id="cf-ghost",
+            source=ImageUsage.SOURCE_AUTO,
+        )
+
+        dry = _call_with_output("reconcile_image_usage", "--dry-run")
+        assert "remove 1 stale row(s)" in dry
+        assert ImageUsage.objects.count() == 1  # dry-run didn't touch it
+
+        real = _call_with_output("reconcile_image_usage")
+        assert "remove 1 stale row(s)" in real
+        assert ImageUsage.objects.count() == 0
+
     def test_prunes_dangling_rows(self):
         # A usage row whose owning object no longer exists (e.g. owner deleted
         # via a signal-bypassing path) is pruned by reconcile.
@@ -277,8 +298,16 @@ class TestMultiDatabase:
         product = Product(image="cf-multidb")
         product.save(using="other")
 
-        assert ImageUsage.objects.using("other").filter(cloudflare_id="cf-multidb").count() == 1
-        assert ImageUsage.objects.using("default").filter(cloudflare_id="cf-multidb").count() == 0
+        assert (
+            ImageUsage.objects.using("other").filter(cloudflare_id="cf-multidb").count()
+            == 1
+        )
+        assert (
+            ImageUsage.objects.using("default")
+            .filter(cloudflare_id="cf-multidb")
+            .count()
+            == 0
+        )
 
     def test_delete_clears_on_correct_db(self):
         product = Product(image="cf-multidb")
@@ -287,3 +316,301 @@ class TestMultiDatabase:
 
         product.delete(using="other")
         assert ImageUsage.objects.using("other").count() == 0
+
+
+@pytest.mark.django_db
+class TestSourceMarker:
+    """Custom-label manual rows must survive reconcile (Codex finding #1)."""
+
+    def test_manual_row_with_custom_label_survives_reconcile(self):
+        # Plain has no CloudflareImageField, so ("Plain", "hero") will never
+        # be in the discovered registry. Without a source marker, reconcile
+        # would prune this row and silently lose the reference.
+        plain = Plain.objects.create(name="x")
+        register_usage(plain, "cf-custom", field_name="hero")
+        usage = usages_for(plain).get()
+        assert usage.source == ImageUsage.SOURCE_MANUAL
+        assert usage.field_name == "hero"
+
+        call_command("reconcile_image_usage")
+        usage.refresh_from_db()
+        assert usages_for(plain).count() == 1
+        assert usage.cloudflare_id == "cf-custom"
+
+    def test_auto_row_with_undiscovered_field_is_pruned(self):
+        # A bare ImageUsage row created with the default source="auto" but
+        # whose (content_type, field_name) is not in the discovered registry
+        # *should* be pruned (it represents a removed/renamed field).
+        product = Product.objects.create(image="cf-1")
+        ct = ContentType.objects.get_for_model(Product)
+        ImageUsage.objects.create(
+            content_type=ct,
+            object_id=str(product.pk),
+            field_name="obsolete_field",
+            cloudflare_id="cf-obsolete",
+        )
+        assert usages_for(product).count() == 2
+
+        call_command("reconcile_image_usage")
+        names = set(usages_for(product).values_list("field_name", flat=True))
+        assert names == {"image"}
+
+    def test_legacy_manual_label_still_protected(self):
+        # Pre-migration manual rows defaulted to ``source="auto"`` (the new
+        # column wasn't there) but always carried ``field_name="manual"``.
+        # The MANUAL_FIELD_NAME exclusion still protects them.
+        plain = Plain.objects.create(name="x")
+        ct = ContentType.objects.get_for_model(Plain)
+        ImageUsage.objects.create(
+            content_type=ct,
+            object_id=str(plain.pk),
+            field_name="manual",
+            cloudflare_id="cf-legacy",
+            source=ImageUsage.SOURCE_AUTO,  # simulates pre-migration row
+        )
+        call_command("reconcile_image_usage")
+        assert usages_for(plain).count() == 1
+
+
+@pytest.mark.django_db
+class TestLegacyMigration:
+    """Migration 0005 backfills last_referenced_at but does NOT guess source.
+
+    Reclassifying pre-existing rows is intentionally avoided: a legacy auto row
+    for a removed field is indistinguishable from a legacy custom-label manual
+    row, so the migration only repairs ``last_referenced_at`` and leaves
+    ``source`` untouched (authoritative only for rows the new register_usage
+    creates). See Codex PR #20 review.
+    """
+
+    def _run_migration(self):
+        from importlib import import_module
+        from types import SimpleNamespace
+
+        from django.apps import apps as global_apps
+
+        migration = import_module(
+            "django_cloudflareimages_toolkit.migrations."
+            "0005_backfill_last_referenced_at"
+        )
+        editor = SimpleNamespace(connection=SimpleNamespace(alias="default"))
+        migration.backfill_last_referenced(global_apps, editor)
+
+    def test_backfills_last_referenced_for_referenced_images(self):
+        image = make_image("cf-ref")
+        product = Product.objects.create(image="cf-ref")
+        # Simulate a legacy row from before last_referenced_at existed.
+        CloudflareImage.objects.filter(pk=image.pk).update(last_referenced_at=None)
+        assert usages_for(product).get().image_id == image.pk
+
+        self._run_migration()
+
+        image.refresh_from_db()
+        assert image.last_referenced_at is not None
+
+    def test_does_not_touch_source(self):
+        # A legacy auto row for a removed/undiscovered field stays "auto" so it
+        # remains prunable; the migration must not flip it to "manual".
+        product = Product.objects.create(name="p")
+        ct = ContentType.objects.get_for_model(Product)
+        legacy = ImageUsage.objects.create(
+            content_type=ct,
+            object_id=str(product.pk),
+            field_name="removed_field",
+            cloudflare_id="cf-removed",
+            source=ImageUsage.SOURCE_AUTO,
+        )
+
+        self._run_migration()
+
+        legacy.refresh_from_db()
+        assert legacy.source == ImageUsage.SOURCE_AUTO
+        # Still prunable by reconcile (its field isn't discovered).
+        call_command("reconcile_image_usage")
+        assert not ImageUsage.objects.filter(pk=legacy.pk).exists()
+
+
+@pytest.mark.django_db
+class TestDryRunCounting:
+    """``--dry-run`` must report what a real run would prune (Codex finding #2)."""
+
+    def test_dry_run_counts_dangling_prune(self):
+        ct = ContentType.objects.get_for_model(Plain)
+        ImageUsage.objects.create(
+            content_type=ct,
+            object_id="999",
+            field_name="manual",
+            cloudflare_id="cf-dangling",
+            source=ImageUsage.SOURCE_MANUAL,
+        )
+        # The row is dangling: its owning Plain pk=999 doesn't exist.
+
+        out = _call_with_output("reconcile_image_usage", "--dry-run")
+        assert "remove 1 stale row(s)" in out
+        # Dry-run leaves the row in place.
+        assert ImageUsage.objects.count() == 1
+
+    def test_dry_run_counts_undiscovered_field_prune(self):
+        product = Product.objects.create(image="cf-1")
+        ct = ContentType.objects.get_for_model(Product)
+        ImageUsage.objects.create(
+            content_type=ct,
+            object_id=str(product.pk),
+            field_name="renamed_field",
+            cloudflare_id="cf-renamed",
+            source=ImageUsage.SOURCE_AUTO,
+        )
+
+        out = _call_with_output("reconcile_image_usage", "--dry-run")
+        # 1 row removed for the renamed-field prune.
+        assert "remove 1 stale row(s)" in out
+        # All rows still present after dry-run.
+        assert ImageUsage.objects.count() == 2
+
+
+def _call_with_output(*args):
+    """Run a management command and return its stdout as a string."""
+    from io import StringIO
+
+    buf = StringIO()
+    call_command(*args, stdout=buf)
+    return buf.getvalue()
+
+
+@pytest.mark.django_db
+class TestOrphanRetention:
+    """Orphan retention uses ``last_referenced_at`` (Codex finding #5)."""
+
+    @responses.activate
+    def test_recently_unused_image_is_protected(self):
+        # An old image that was referenced until just now should NOT be deleted
+        # by an orphan-cleanup run, even though created_at is past the threshold.
+        image = make_image("cf-protected")
+        product = Product.objects.create(image="cf-protected")
+        # Make created_at very old so the legacy clock would say "delete me".
+        CloudflareImage.objects.filter(pk=image.pk).update(
+            created_at=timezone.now() - timedelta(days=365)
+        )
+        # Now drop the reference (last_referenced_at remains "just now").
+        product.delete()
+        assert (
+            CloudflareImage.objects.filter(cloudflare_id="cf-protected")
+            .first()
+            .last_referenced_at
+            is not None
+        )
+
+        call_command(
+            "cleanup_expired_images", "--delete-orphans", "--orphan-days", "30"
+        )
+        assert CloudflareImage.objects.filter(cloudflare_id="cf-protected").exists()
+
+    @responses.activate
+    def test_never_referenced_image_uses_created_at(self):
+        # Backward compat: an image that has never been touched by the registry
+        # (``last_referenced_at IS NULL``) falls back to ``created_at``.
+        image = make_image("cf-never-used")
+        CloudflareImage.objects.filter(pk=image.pk).update(
+            created_at=timezone.now() - timedelta(days=365)
+        )
+        _mock_delete("cf-never-used")
+
+        call_command(
+            "cleanup_expired_images", "--delete-orphans", "--orphan-days", "30"
+        )
+        assert not CloudflareImage.objects.filter(
+            cloudflare_id="cf-never-used"
+        ).exists()
+
+
+@pytest.mark.django_db
+class TestLastReferencedBookkeeping:
+    """``last_referenced_at`` is maintained on every reference change."""
+
+    def test_post_delete_bumps_last_referenced(self):
+        # Codex finding (PR #20): a usage row deletion is the moment the image
+        # lost a reference. ``last_referenced_at`` must be updated then so
+        # legacy data (created_at very old, last_referenced_at NULL until just
+        # now) is no longer at risk of immediate orphan cleanup.
+        image = make_image("cf-tracked")
+        product = Product.objects.create(image="cf-tracked")
+        bumped_at = CloudflareImage.objects.get(pk=image.pk).last_referenced_at
+        assert bumped_at is not None
+
+        # Bypass auto signals -> use the raw ORM to delete the usage row.
+        ImageUsage.objects.filter(cloudflare_id="cf-tracked").delete()
+
+        image.refresh_from_db()
+        # Bumped again on the deletion event -> >= the value at creation time.
+        assert image.last_referenced_at >= bumped_at
+        # Reset the host record so we don't double-write.
+        product.delete()
+
+    def test_record_usage_bumps_previous_image_on_change(self):
+        # When a host model's field value changes, the OLD image (which is
+        # losing its reference) gets its ``last_referenced_at`` bumped too,
+        # so its orphan retention clock starts now.
+        old = make_image("cf-old")
+        new = make_image("cf-new")
+        product = Product.objects.create(image="cf-old")
+        # Both should now have last_referenced_at set.
+        old_bumped = CloudflareImage.objects.get(pk=old.pk).last_referenced_at
+        assert old_bumped is not None
+
+        # Reassign the field; sync_object will call record_usage with cf-new.
+        product.image = "cf-new"
+        product.save()
+
+        old.refresh_from_db()
+        new.refresh_from_db()
+        # Old image's clock is bumped to mark the dereference moment.
+        assert old.last_referenced_at >= old_bumped
+        # New image is also referenced now.
+        assert new.last_referenced_at is not None
+
+    def test_unchanged_reference_does_not_bump(self):
+        # Idempotency: re-recording an unchanged reference (e.g. a no-op
+        # reconcile pass) must leave last_referenced_at untouched.
+        image = make_image("cf-stable")
+        Product.objects.create(image="cf-stable")
+        first = CloudflareImage.objects.get(pk=image.pk).last_referenced_at
+        assert first is not None
+
+        call_command("reconcile_image_usage")
+
+        second = CloudflareImage.objects.get(pk=image.pk).last_referenced_at
+        assert second == first
+
+
+@pytest.mark.django_db
+class TestManualLabelCollision:
+    """register_usage rejects labels that collide with a tracked field."""
+
+    def test_register_usage_rejects_tracked_field_label(self):
+        # Codex finding (PR #20): usage rows are unique on
+        # (content_type, object_id, field_name), so a manual row whose label
+        # matches a tracked CloudflareImageField would share the auto row's
+        # slot and the two references would clobber each other. The collision
+        # is rejected up front instead.
+        product = Product.objects.create(name="p")  # image is blank
+        with pytest.raises(ValueError, match="collides with the tracked"):
+            register_usage(product, "cf-manual-collide", field_name="image")
+        # Nothing was written for the colliding label.
+        assert not ImageUsage.objects.filter(
+            object_id=str(product.pk), field_name="image"
+        ).exists()
+
+    def test_distinct_manual_label_coexists_with_tracked_field(self):
+        # A non-colliding manual label lives alongside the auto-tracked row and
+        # both survive reconcile.
+        product = Product.objects.create(image="cf-auto")
+        register_usage(product, "cf-manual", field_name="gallery")
+        assert usages_for(product).count() == 2
+
+        call_command("reconcile_image_usage")
+
+        rows = {u.field_name: u for u in usages_for(product)}
+        assert rows["image"].source == ImageUsage.SOURCE_AUTO
+        assert rows["image"].cloudflare_id == "cf-auto"
+        assert rows["gallery"].source == ImageUsage.SOURCE_MANUAL
+        assert rows["gallery"].cloudflare_id == "cf-manual"

@@ -72,8 +72,23 @@ register_usage(obj, "other-id", field_name="hero")    # distinguish multiple ref
 unregister_usage(obj)
 ```
 
-Use a `field_name` that does not collide with a real `CloudflareImageField` name,
-since `reconcile_image_usage` treats discovered field names as auto-managed.
+Manual rows are tagged with `source="manual"` on `ImageUsage` and reconcile
+preserves them regardless of `field_name`.
+
+> **The `field_name` must not match a `CloudflareImageField` on the model.**
+> Usage rows are unique on `(content_type, object_id, field_name)`, so a manual
+> label that collides with a tracked field name would share the *same row* as
+> the auto-tracked reference — the two would overwrite each other. `register_usage`
+> raises `ValueError` if you pass a colliding label. Use a distinct label (the
+> default `"manual"` is always safe).
+
+> **Upgrading a dev build that already used `register_usage` with a custom
+> label.** The `source` marker only exists from this release on, so reconcile
+> can't tell a pre-existing custom-label manual row apart from an auto row for a
+> renamed/removed field. Re-run your `register_usage(...)` calls once after
+> upgrading to stamp `source="manual"` on those rows. (Rows using the default
+> `"manual"` label are always protected; released versions have no pre-existing
+> rows because the registry ships whole in one release.)
 
 ## Reverse lookups
 
@@ -111,4 +126,7 @@ Run it once after first deploying this version to backfill existing references
   `by-cloudflare-id` lookup, and usage-aware deletes
   (see [Views and Routes](./api-reference/views-and-routes)).
 - **Cleanup** — `cleanup_expired_images --delete-orphans` removes long-unused
-  images from Cloudflare and the database.
+  images from Cloudflare and the database. Retention is based on
+  `CloudflareImage.last_referenced_at` (bumped each time the registry records a
+  reference), not on upload time — an image that was used for years and only
+  recently became unused is protected by `--orphan-days`.

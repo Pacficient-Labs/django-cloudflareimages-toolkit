@@ -105,21 +105,89 @@ def _resolve_image(cloudflare_id: str, using=None):
     )
 
 
+def _bump_last_referenced(image_or_pk, using=None) -> None:
+    """Mark an image as referenced now.
+
+    Accepts either a ``CloudflareImage`` instance or a bare primary key (the
+    latter is used by the ``ImageUsage`` ``post_delete`` receiver where the row
+    is gone but its FK pk is still available on ``instance.image_id``).
+
+    Updated via ``.update()`` so this doesn't trigger ``post_save`` (and thus
+    won't recurse through the registry's own signals).
+    """
+    if image_or_pk is None:
+        return
+    from django.utils import timezone
+
+    from .models import CloudflareImage
+
+    pk = image_or_pk.pk if hasattr(image_or_pk, "pk") else image_or_pk
+    CloudflareImage.objects.using(_db(using)).filter(pk=pk).update(
+        last_referenced_at=timezone.now()
+    )
+
+
 def record_usage(
-    content_type, object_id, field_name: str, cloudflare_id: str, using=None
+    content_type,
+    object_id,
+    field_name: str,
+    cloudflare_id: str,
+    source: str | None = None,
+    using=None,
 ):
-    """Idempotently upsert one usage row. The single shared write path."""
+    """Idempotently upsert one usage row. The single shared write path.
+
+    ``source`` distinguishes auto-discovered rows (``ImageUsage.SOURCE_AUTO``,
+    the default) from manual-API rows (``ImageUsage.SOURCE_MANUAL``);
+    ``reconcile_image_usage`` preserves the latter no matter what their
+    ``field_name`` is.
+
+    ``last_referenced_at`` on the affected image(s) is bumped only on a genuine
+    reference change — a newly created row, or an existing row now pointing at a
+    different image. Re-recording an unchanged reference (e.g. a no-op reconcile
+    pass) therefore leaves every image's clock untouched, keeping the operation
+    idempotent.
+    """
     from .models import ImageUsage
 
-    usage, _ = ImageUsage.objects.using(_db(using)).update_or_create(
+    if source is None:
+        source = ImageUsage.SOURCE_AUTO
+
+    image = _resolve_image(cloudflare_id, using=using)
+    new_pk = image.pk if image is not None else None
+
+    # Capture the slot's prior image (if any row exists) before the upsert so we
+    # can tell "created" from "image changed" from "unchanged".
+    existing = (
+        ImageUsage.objects.using(_db(using))
+        .filter(
+            content_type=content_type,
+            object_id=str(object_id),
+            field_name=field_name,
+        )
+        .values("image_id")
+        .first()
+    )
+
+    usage, created = ImageUsage.objects.using(_db(using)).update_or_create(
         content_type=content_type,
         object_id=str(object_id),
         field_name=field_name,
         defaults={
             "cloudflare_id": cloudflare_id,
-            "image": _resolve_image(cloudflare_id, using=using),
+            "image": image,
+            "source": source,
         },
     )
+
+    if created:
+        _bump_last_referenced(image, using=using)
+    elif existing is not None and existing["image_id"] != new_pk:
+        # The slot now points at a different image: the previous image lost a
+        # reference (clock starts now) and the new one gained one.
+        _bump_last_referenced(existing["image_id"], using=using)
+        _bump_last_referenced(image, using=using)
+
     return usage
 
 
@@ -173,15 +241,38 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
         obj: Any saved model instance that "owns" the reference.
         cloudflare_id: The Cloudflare image ID being referenced.
         field_name: A label distinguishing this reference from others on the same
-            object (defaults to ``"manual"``).
+            object (defaults to ``"manual"``). It must NOT match the name of a
+            ``CloudflareImageField`` declared on ``obj``'s model: usage rows are
+            unique on ``(content_type, object_id, field_name)``, so a colliding
+            label would share a row with the auto-tracked field and the two
+            references would overwrite each other.
 
     Returns:
         The created or updated :class:`~...models.ImageUsage` row.
+
+    Raises:
+        ValueError: If ``field_name`` collides with a tracked field on the model.
     """
+    from .models import ImageUsage
+
     model = type(obj)
+    tracked = get_tracked_field_names(model)
+    if field_name in tracked:
+        raise ValueError(
+            f"field_name {field_name!r} collides with the tracked "
+            f"CloudflareImageField of the same name on {model._meta.label}. "
+            f"Pick a distinct label for the manual reference."
+        )
     using = obj._state.db
     content_type = _content_type_for(model, using=using)
-    usage = record_usage(content_type, obj.pk, field_name, cloudflare_id, using=using)
+    usage = record_usage(
+        content_type,
+        obj.pk,
+        field_name,
+        cloudflare_id,
+        source=ImageUsage.SOURCE_MANUAL,
+        using=using,
+    )
     # Ensure the owner's deletion clears its usage rows even when the model has
     # no CloudflareImageField (and so was never wired in apps.ready()).
     ensure_delete_cleanup(model)

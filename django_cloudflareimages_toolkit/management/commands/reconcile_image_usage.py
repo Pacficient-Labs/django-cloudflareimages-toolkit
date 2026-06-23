@@ -40,7 +40,12 @@ class Command(BaseCommand):
         registry = get_models_with_image_fields(refresh=True)
 
         upserts = 0
-        deletes = 0
+        # Collect the PKs of every row that should be removed across all three
+        # phases into one set, so the reported count is deduplicated and a
+        # dry-run reports exactly what a real run would delete (a row that is
+        # both "stale" in the main loop and "dangling"/"undiscovered" is counted
+        # once). Deletion happens once at the end.
+        to_delete: set = set()
 
         # Stable iteration order keeps the operation deterministic.
         for model in sorted(registry, key=lambda m: m._meta.label):
@@ -60,74 +65,101 @@ class Command(BaseCommand):
                     if cloudflare_id:
                         current[str(instance.pk)] = cloudflare_id
 
-                existing_ids = set(
+                # Manual rows (``source="manual"``) are owned by the caller and
+                # take precedence over auto reconciliation: never count them as
+                # stale, never overwrite their ``source`` back to ``"auto"``. A
+                # manual row whose ``field_name`` happens to collide with a
+                # tracked field's name is therefore safe.
+                manual_object_ids = set(
                     ImageUsage.objects.filter(
-                        content_type=content_type, field_name=field_name
+                        content_type=content_type,
+                        field_name=field_name,
+                        source=ImageUsage.SOURCE_MANUAL,
                     ).values_list("object_id", flat=True)
                 )
+                auto_rows = ImageUsage.objects.filter(
+                    content_type=content_type, field_name=field_name
+                ).exclude(source=ImageUsage.SOURCE_MANUAL)
+                existing_ids = set(auto_rows.values_list("object_id", flat=True))
                 stale = existing_ids - set(current)
+                actionable_current = {
+                    oid: cid
+                    for oid, cid in current.items()
+                    if oid not in manual_object_ids
+                }
 
-                upserts += len(current)
-                deletes += len(stale)
+                upserts += len(actionable_current)
+                if stale:
+                    to_delete.update(
+                        auto_rows.filter(object_id__in=stale).values_list(
+                            "pk", flat=True
+                        )
+                    )
 
                 if not dry_run:
                     with transaction.atomic():
-                        for object_id, cloudflare_id in current.items():
+                        for object_id, cloudflare_id in actionable_current.items():
                             record_usage(
                                 content_type, object_id, field_name, cloudflare_id
                             )
-                        if stale:
-                            ImageUsage.objects.filter(
-                                content_type=content_type,
-                                field_name=field_name,
-                                object_id__in=stale,
-                            ).delete()
+
+        to_delete |= self._undiscovered_field_pks(registry)
+        to_delete |= self._dangling_pks()
 
         if not dry_run:
-            deletes += self._prune_undiscovered_fields(registry)
-            deletes += self._prune_dangling()
+            if to_delete:
+                ImageUsage.objects.filter(pk__in=to_delete).delete()
             self._backfill_images()
 
-        self._report(dry_run, upserts, deletes)
+        self._report(dry_run, upserts, len(to_delete))
 
-    def _prune_undiscovered_fields(self, registry) -> int:
-        """Drop auto-tracked rows for fields no longer in the registry.
+    @staticmethod
+    def _auto_rows():
+        """QuerySet of rows that reconcile is allowed to prune.
+
+        Manual rows (created via ``register_usage``) are protected by their
+        ``source`` marker regardless of ``field_name``. Pre-migration rows whose
+        ``source`` defaulted to ``"auto"`` but whose label was the legacy
+        ``"manual"`` are also protected, so upgrading is non-destructive.
+        """
+        return ImageUsage.objects.exclude(source=ImageUsage.SOURCE_MANUAL).exclude(
+            field_name=MANUAL_FIELD_NAME
+        )
+
+    def _undiscovered_field_pks(self, registry) -> set:
+        """PKs of auto rows for fields no longer in the registry.
 
         Covers renamed/removed ``CloudflareImageField``s (their old usage rows
-        would otherwise keep their images looking in-use forever). Manual rows
-        — ``field_name == MANUAL_FIELD_NAME`` — are deliberately preserved
-        because they were created through the public API, not derived from a
-        host model field.
+        would otherwise keep their images looking in-use forever). Rows whose
+        ``source`` is ``"manual"`` are preserved regardless of ``field_name``.
         """
         discovered = {
             (ContentType.objects.get_for_model(model).pk, field_name)
             for model, fields in registry.items()
             for field_name in fields
         }
-        auto = ImageUsage.objects.exclude(field_name=MANUAL_FIELD_NAME)
-        seen_pairs = auto.values_list("content_type", "field_name").distinct()
-        removed = 0
-        for content_type_id, field_name in seen_pairs:
+        auto = self._auto_rows()
+        pks: set = set()
+        for content_type_id, field_name in auto.values_list(
+            "content_type", "field_name"
+        ).distinct():
             if (content_type_id, field_name) in discovered:
                 continue
-            count, _ = (
-                ImageUsage.objects.filter(
+            pks.update(
+                auto.filter(
                     content_type_id=content_type_id, field_name=field_name
-                )
-                .exclude(field_name=MANUAL_FIELD_NAME)
-                .delete()
+                ).values_list("pk", flat=True)
             )
-            removed += count
-        return removed
+        return pks
 
-    def _prune_dangling(self) -> int:
-        """Delete usage rows whose owning object no longer exists.
+    def _dangling_pks(self) -> set:
+        """PKs of usage rows whose owning object no longer exists.
 
         Covers manually-registered owners and removed models/objects that bypass
         the post_delete signal, so a deleted owner can't keep an image looking
         in-use. Grouped by content type to avoid per-row object lookups.
         """
-        removed = 0
+        pks: set = set()
         content_type_ids = (
             ImageUsage.objects.values_list("content_type", flat=True)
             .distinct()
@@ -139,17 +171,13 @@ class Command(BaseCommand):
             model = content_type.model_class()
             if model is None:
                 # The model (or its app) was removed entirely.
-                removed += rows.count()
-                rows.delete()
+                pks.update(rows.values_list("pk", flat=True))
                 continue
             existing = {
                 str(pk) for pk in model._base_manager.values_list("pk", flat=True)
             }
-            stale_pks = [row.pk for row in rows if row.object_id not in existing]
-            if stale_pks:
-                removed += len(stale_pks)
-                ImageUsage.objects.filter(pk__in=stale_pks).delete()
-        return removed
+            pks.update(row.pk for row in rows if row.object_id not in existing)
+        return pks
 
     def _backfill_images(self):
         """Link any unlinked usages to a now-existing CloudflareImage record."""

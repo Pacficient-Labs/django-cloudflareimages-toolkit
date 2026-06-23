@@ -9,6 +9,53 @@ Release notes are also published on
 
 ## [Unreleased]
 
+### Changed
+
+- **Image usage registry follow-ups (from Codex review on #19).**
+  - `ImageUsage` gains a `source` column (`"auto"` / `"manual"`); manual rows
+    survive `reconcile_image_usage` regardless of their `field_name`, so callers
+    are free to use any label with
+    `register_usage(obj, cf_id, field_name="hero")`.
+  - `CloudflareImage` gains a `last_referenced_at` column updated each time a
+    reference is recorded; `cleanup_expired_images --delete-orphans` now bases
+    `--orphan-days` retention on time-since-unused rather than upload time. A
+    `null` value falls back to `created_at` for legacy data.
+  - `reconcile_image_usage --dry-run` now reports counts from the
+    undiscovered-field and dangling-owner pruning passes (previously skipped
+    entirely), restoring the safety guarantee of the flag.
+  - The lookup route `GET /images/by-cloudflare-id/<cloudflare_id>/` now accepts
+    path-style Cloudflare custom IDs (e.g. `products/123/hero`).
+  - `?metadata__<key>=...` filters on the list endpoint reject reserved
+    JSONField lookup names (`contains`, `has_key`, …) so a stray query param
+    can't 500 the view on SQLite.
+  - The `ImageUsage` admin denies deletion (`has_delete_permission = False` and
+    the bulk `delete_selected` action is dropped) so staff can't silently make
+    referenced images look orphaned.
+  - **P1 follow-up:** legacy `CloudflareImage` rows that already have
+    `ImageUsage` references are backfilled with `last_referenced_at = now()` by
+    a one-time data migration, so a long-lived image whose final reference is
+    removed immediately after upgrade is not eligible for orphan cleanup.
+    The clock is also bumped whenever an `ImageUsage` row is deleted (any
+    path) and when `record_usage` reassigns an existing row to a new image, so
+    retention correctly tracks the moment a reference disappears.
+  - The main reconcile loop now honours `source="manual"` (skipping manual rows
+    in both the stale-delete pass and the upsert), so a manual row whose
+    `field_name` collides with a tracked field is no longer wiped or
+    re-classified as `source="auto"`.
+  - **Second-review follow-ups:** `register_usage` raises `ValueError` if
+    `field_name` collides with a tracked `CloudflareImageField` (they would share
+    a uniqueness slot). `reconcile_image_usage` now computes a deduplicated set of
+    rows to delete, so `--dry-run` and the real run report identical counts even
+    when a row is both stale and dangling. `?metadata__<key>=...` filters accept
+    non-identifier JSON keys (hyphens, dots, nested) and return **400** for a
+    reserved lookup operator instead of silently dropping the filter or 500-ing.
+    The `0005` data migration backfills `last_referenced_at` for already-referenced
+    images but deliberately does **not** infer `source` for pre-existing rows
+    (a legacy auto row for a removed field is indistinguishable from a legacy
+    custom-label manual row); `source` is authoritative only for rows created by
+    `register_usage` from this release on. If you used a custom manual label on a
+    pre-release dev build, re-run those `register_usage` calls after upgrading.
+
 ### Added
 
 - **Configurable image delivery URL.** New `CLOUDFLARE_IMAGES` keys let site

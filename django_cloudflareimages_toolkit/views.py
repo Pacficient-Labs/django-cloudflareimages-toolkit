@@ -8,7 +8,9 @@ transformations, and management operations.
 import json
 import logging
 
+from django.core.exceptions import FieldError
 from django.db.models import Q
+from django.db.utils import NotSupportedError
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
@@ -41,6 +43,36 @@ from .services import cloudflare_service
 from .settings import cloudflare_settings
 
 logger = logging.getLogger(__name__)
+
+# Django lookup names that collide with ``metadata__<key>=...`` query params.
+# Anything in this set after the ``metadata__`` prefix is rejected so a caller
+# can't accidentally trigger a JSONField lookup (some, like ``contains``, raise
+# NotSupportedError on SQLite and would surface as a 500).
+_RESERVED_JSON_LOOKUPS = frozenset(
+    {
+        "exact",
+        "iexact",
+        "contains",
+        "icontains",
+        "in",
+        "gt",
+        "gte",
+        "lt",
+        "lte",
+        "startswith",
+        "istartswith",
+        "endswith",
+        "iendswith",
+        "range",
+        "isnull",
+        "regex",
+        "iregex",
+        "has_key",
+        "has_keys",
+        "has_any_keys",
+        "contained_by",
+    }
+)
 
 
 def _truthy(value) -> bool:
@@ -110,17 +142,36 @@ class CloudflareImageViewSet(ModelViewSet):
         if "orphaned" in params and filters.get("orphaned"):
             queryset = queryset.filter(usages__isnull=True)
 
-        # Dynamic metadata lookups: ?metadata__<key>=<value>
+        # Dynamic metadata lookups: ?metadata__<key>=<value>. The trailing
+        # segment is treated as a JSON key (which may contain hyphens, dots, or
+        # be nested via ``__``), not a Django field lookup. We reject only the
+        # final segment matching a JSONField lookup operator (e.g. ``contains``,
+        # which would 500 on SQLite) so a stray operator surfaces as a clean 400
+        # instead of being silently dropped or crashing.
         for param, value in params.items():
-            if param.startswith("metadata__"):
+            if not param.startswith("metadata__"):
+                continue
+            if param.rsplit("__", 1)[-1] in _RESERVED_JSON_LOOKUPS:
+                raise DRFValidationError(
+                    {param: "Unsupported metadata lookup operator."}
+                )
+            try:
                 queryset = queryset.filter(**{param: value})
+            except (FieldError, NotSupportedError) as exc:
+                raise DRFValidationError(
+                    {param: "Unsupported metadata lookup."}
+                ) from exc
 
         return queryset.distinct()
 
     @action(
         detail=False,
         methods=["get"],
-        url_path="by-cloudflare-id/(?P<cloudflare_id>[^/]+)",
+        # ``.+`` (not ``[^/]+``) so path-style Cloudflare custom IDs like
+        # ``products/123/hero`` resolve through this lookup; Cloudflare allows
+        # arbitrary slash-containing custom IDs and the ``custom_id`` upload
+        # path accepts them, so this lookup must too.
+        url_path=r"by-cloudflare-id/(?P<cloudflare_id>.+)",
     )
     def by_cloudflare_id(self, request: Request, cloudflare_id: str = None) -> Response:
         """Look up an image by its Cloudflare ID (instead of the internal UUID)."""

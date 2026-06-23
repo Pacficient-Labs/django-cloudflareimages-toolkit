@@ -22,7 +22,7 @@ class CloudflareImagesConfig(AppConfig):
         from django.db.models.signals import post_delete, post_save
 
         from . import signals
-        from .models import CloudflareImage
+        from .models import CloudflareImage, ImageUsage
         from .registry import get_models_with_image_fields
 
         for model in get_models_with_image_fields():
@@ -42,4 +42,12 @@ class CloudflareImagesConfig(AppConfig):
             signals.link_image_to_usages,
             sender=CloudflareImage,
             dispatch_uid="cfimg_link_usages",
+        )
+        # Mark the affected image's last_referenced_at whenever any usage row is
+        # removed (whatever the deletion path: sync_object, clear_object,
+        # unregister_usage, admin, or a raw ORM delete).
+        post_delete.connect(
+            signals.bump_image_on_usage_delete,
+            sender=ImageUsage,
+            dispatch_uid="cfimg_bump_image_on_usage_delete",
         )
