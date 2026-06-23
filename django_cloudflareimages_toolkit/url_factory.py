@@ -229,10 +229,20 @@ class CloudflareImageURLFactory:
         if not self.is_delivery_url(url):
             return None, None
         parts = urlsplit(url if "://" in url else f"//{url}")
-        path = parts.path.strip("/")
+        # Strip a single leading/trailing slash but keep interior empties visible
+        # so malformed paths (e.g. "//id" or "hash//variant") are rejected rather
+        # than silently collapsed.
+        path = parts.path
+        if path.startswith("/"):
+            path = path[1:]
+        if path.endswith("/"):
+            path = path[:-1]
         if not path:
             return None, None
         segs = path.split("/")
+        if "" in segs:
+            # A missing/empty required segment -> not a valid delivery path.
+            return None, None
 
         if parts.netloc == self.DEFAULT_HOST:
             segs = segs[1:]  # drop the account hash

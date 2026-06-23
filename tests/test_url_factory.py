@@ -470,6 +470,36 @@ class TransformRewritesSharedHostTest(TestCase):
         )
 
 
+@cf_settings()
+class MalformedPathTest(TestCase):
+    """Malformed shared-host paths must not validate or extract (P2)."""
+
+    MALFORMED = [
+        f"https://imagedelivery.net//{IMAGE_ID}/public",  # empty hash
+        f"https://imagedelivery.net/{HASH}//public",  # empty id
+        f"https://imagedelivery.net/{HASH}",  # missing id
+    ]
+
+    def test_extract_returns_none(self):
+        for url in self.MALFORMED:
+            with self.subTest(url=url):
+                self.assertIsNone(image_url_factory.extract_image_id(url))
+
+    def test_validate_rejects(self):
+        from django_cloudflareimages_toolkit.transformations import CloudflareImageUtils
+
+        for url in self.MALFORMED:
+            with self.subTest(url=url):
+                self.assertFalse(CloudflareImageUtils.validate_image_url(url))
+
+    def test_wellformed_still_valid(self):
+        from django_cloudflareimages_toolkit.transformations import CloudflareImageUtils
+
+        self.assertTrue(CloudflareImageUtils.validate_image_url(IMG_URL))
+        # A single trailing slash is tolerated.
+        self.assertEqual(image_url_factory.extract_image_id(f"{IMG_URL}/"), IMAGE_ID)
+
+
 class SingletonTest(TestCase):
     def test_singleton_is_factory_instance(self):
         self.assertIsInstance(image_url_factory, CloudflareImageURLFactory)
