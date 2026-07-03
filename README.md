@@ -116,6 +116,14 @@ python manage.py makemigrations django_cloudflareimages_toolkit
 python manage.py migrate
 ```
 
+> **Referencing `CloudflareImage` from your custom user model's app?**
+> If the *same* migration that defines your `AUTH_USER_MODEL` (or any model in
+> it) has a `ForeignKey` to `CloudflareImage`, see
+> [Referencing CloudflareImage from a custom user model](#referencing-cloudflareimage-from-a-custom-user-model)
+> below — you need one explicit migration dependency to avoid a circular
+> dependency. Ordinary apps that reference `CloudflareImage` from a *different*
+> app than the one defining the user model need no special handling.
+
 ### 4. Django Admin Integration (Optional)
 
 The module includes comprehensive Django admin integration for monitoring and managing images:
@@ -595,6 +603,49 @@ Reverse index mapping each image to the content that references it (see
 - `field_name`: the field that holds the reference (e.g. `avatar`, or `manual`)
 - `cloudflare_id`: the referenced Cloudflare image ID (source of truth)
 - `image`: resolved `CloudflareImage` (null = referenced but unregistered)
+
+### Referencing CloudflareImage from a custom user model
+
+`CloudflareImage.user` is a `ForeignKey` to `settings.AUTH_USER_MODEL`. That
+foreign key lives in migration `0007_cloudflareimage_user`, **not** in
+`0001_initial` — `0001_initial` creates the `CloudflareImage` table with **no**
+dependency on your user model. This is deliberate: it lets you reference
+`CloudflareImage` from the very migration that defines your custom user model.
+
+Most projects need no special handling. You only have to do anything if the
+**same migration that defines your `AUTH_USER_MODEL`** (or another model created
+alongside it) has a `ForeignKey` to `CloudflareImage`. In that case Django's
+autodetector will, by default, make your migration depend on this app's
+*latest* migration (`0007_cloudflareimage_user`). Because `0007` in turn
+depends on your user model, that creates a circular dependency:
+
+```
+yourapp.0001  ->  toolkit.0007  (Django's default: depend on the latest migration)
+toolkit.0007  ->  yourapp.0001  (0007 adds the FK to AUTH_USER_MODEL)
+```
+
+Django cannot resolve which migration to depend on for you here — only you know
+that your user-model migration merely needs the `CloudflareImage` **table** to
+exist, which happens in `0001_initial`. Point the dependency there instead:
+
+```python
+class Migration(migrations.Migration):
+    initial = True
+
+    dependencies = [
+        # Depend on the migration that CREATES CloudflareImage, not the
+        # auto-generated dependency on the latest toolkit migration. 0001 is
+        # dependency-free, so this cannot form a circular dependency.
+        ("django_cloudflareimages_toolkit", "0001_initial"),
+        # ... your other dependencies (auth, contenttypes, etc.)
+    ]
+    operations = [ ... ]
+```
+
+If `makemigrations` generated a dependency on `0007_cloudflareimage_user` (or
+whatever the current latest toolkit migration is), replace it with
+`0001_initial`. The user FK on `CloudflareImage` is then added afterward by
+`0007`, which runs once your user table exists.
 
 ## Image Usage Registry (SSOT)
 
