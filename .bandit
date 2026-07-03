@@ -1,0 +1,9 @@
+[bandit]
+# Bandit (run by Codacy) is a security scanner for shipped/production code.
+# The test suite is not shipped and legitimately uses patterns Bandit flags
+# as "issues" only in an application context -- chiefly bare `assert`
+# (B101, which is how pytest tests are written), plus test-only helpers such
+# as a broad `except` in database teardown (B110) and empty-string DB
+# credential keys in throwaway settings (B105/B106). Excluding the tests
+# directory keeps Bandit focused on the installable package.
+exclude = /tests
