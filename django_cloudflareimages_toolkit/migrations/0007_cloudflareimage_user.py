@@ -3,14 +3,25 @@ safely depend on ``AUTH_USER_MODEL``.
 
 Why this exists: ``0001_initial`` used to create this FK (and the
 ``user``+``status`` index) directly, which put a swappable dependency on
-``AUTH_USER_MODEL`` onto the app's *initial* migration. That makes the
-toolkit unusable for any project whose custom user model (or a model sharing
-an initial migration with the user model) also has a FK to
-``CloudflareImage``: ``consumer.0001 -> toolkit.0001`` (needs the user model)
-while ``toolkit.0001 -> consumer.0001`` (consumer defines the user model) is
-an unresolvable ``CircularDependencyError``. ``0001_initial`` no longer
-creates ``user`` for exactly this reason; this migration -- which is not
-anyone's initial migration -- carries the swappable dependency instead.
+``AUTH_USER_MODEL`` onto the app's *initial* migration. Moving the FK here --
+onto a migration that is nobody's initial migration -- lets ``0001_initial``
+be dependency-free, which is the necessary enabler for a consuming project to
+reference ``CloudflareImage`` from the same migration that defines its custom
+user model.
+
+Important nuance about the remaining cycle (see the ``CONSUMER APPS`` section
+in the README): Django's autodetector pins a consumer's FK-to-CloudflareImage
+dependency to the toolkit's *leaf* migration, not to ``0001`` where the model
+is created (``MigrationAutodetector._build_migration_list``: "we don't know
+which migration contains the target field" -> ``graph.leaf_nodes()``). Since
+the leaf transitively depends on this migration, and this migration depends on
+``AUTH_USER_MODEL`` (the consumer), the auto-generated graph is
+``consumer.0001 -> toolkit.<leaf> -> consumer.0001`` -- still a cycle. The
+toolkit cannot change that resolution. The supported fix is for the consumer
+to depend on ``("django_cloudflareimages_toolkit", "0001_initial")``
+explicitly; that edge is safe precisely because this restructuring made
+``0001`` swappable-free. Before this change, no consumer edit could break the
+cycle, because ``0001`` itself carried the swappable dependency.
 
 Why the operations below are custom (``AddFieldIfMissing``/
 ``AddIndexIfMissing``) rather than plain ``AddField``/``AddIndex``: databases
@@ -77,13 +88,17 @@ class AddFieldIfMissing(migrations.AddField):
         super().database_forwards(app_label, schema_editor, from_state, to_state)
 
     def database_backwards(self, app_label, schema_editor, from_state, to_state):
-        model = from_state.apps.get_model(app_label, self.model_name)
-        if not self.allow_migrate_model(schema_editor.connection.alias, model):
-            return
-        column = self._column_name(from_state, app_label)
-        if column not in self._existing_columns(schema_editor, model._meta.db_table):
-            return
-        super().database_backwards(app_label, schema_editor, from_state, to_state)
+        # Intentionally a database no-op (state still reverts via the inherited
+        # state_backwards). On an install upgraded from the original 0001 the
+        # user column, its FK constraint, and its data predate THIS migration
+        # -- 0007 did not create them, it skipped forward because they already
+        # existed -- and this migration cannot distinguish that install from a
+        # fresh one where it did create the column. Dropping the column on
+        # reverse would therefore destroy real user<->image associations that
+        # 0007 never added. We accept a down-migration that leaves the column
+        # in place (harmless: a later forward migrate skips it again, and the
+        # model always defines `user`) rather than risk irreversible data loss.
+        return
 
 
 class AddIndexIfMissing(migrations.AddIndex):
@@ -133,14 +148,11 @@ class AddIndexIfMissing(migrations.AddIndex):
         super().database_forwards(app_label, schema_editor, from_state, to_state)
 
     def database_backwards(self, app_label, schema_editor, from_state, to_state):
-        model = from_state.apps.get_model(app_label, self.model_name)
-        if not self.allow_migrate_model(schema_editor.connection.alias, model):
-            return
-        if self.index.name not in self._existing_index_names(
-            schema_editor, model._meta.db_table
-        ):
-            return
-        super().database_backwards(app_label, schema_editor, from_state, to_state)
+        # No-op for the same reason as AddFieldIfMissing.database_backwards:
+        # on an upgraded install this index predates 0007, so reversing 0007
+        # must not drop it. State still reverts via the inherited
+        # state_backwards; the physical index is left untouched.
+        return
 
 
 class Migration(migrations.Migration):

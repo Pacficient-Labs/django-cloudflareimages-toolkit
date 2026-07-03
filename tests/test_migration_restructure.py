@@ -12,13 +12,14 @@ databases and the real migration executor (not hand-rolled DDL assertions):
   ``0007_cloudflareimage_user`` exists to protect: a plain ``AddField``/
   ``AddIndex`` would fail there with a "column/index already exists" error.
 
-* :func:`test_consumer_app_fk_to_cloudflareimage_has_no_circular_dependency`
-  simulates the actual bug report: a consuming app whose own
-  ``0001_initial`` has a FK to ``CloudflareImage`` *and* defines
-  ``AUTH_USER_MODEL``. Before this restructuring that produces an
-  unresolvable ``CircularDependencyError``; after it, the graph must build
-  and migrate cleanly because the toolkit's ``0001_initial`` no longer has a
-  swappable dependency.
+* :func:`test_consumer_pinned_to_0001_has_no_circular_dependency` and
+  :func:`test_consumer_pinned_to_leaf_still_cycles` cover the actual bug
+  report -- a consuming app whose own ``0001_initial`` FKs ``CloudflareImage``
+  *and* defines ``AUTH_USER_MODEL`` -- using the toolkit's real on-disk
+  dependencies. Django pins such a consumer's dependency to the toolkit
+  *leaf*, which still cycles (the residual limitation); the supported fix is
+  for the consumer to pin to ``0001_initial``, which the restructuring made
+  safe. Both facts are asserted so behavior and docs can't drift apart.
 """
 
 from __future__ import annotations
@@ -276,59 +277,90 @@ def test_toolkit_initial_migration_has_no_dependencies():
     assert migration.dependencies == []
 
 
-def test_consumer_app_fk_to_cloudflareimage_has_no_circular_dependency():
-    """Reproduce the reported bug topology directly on the migration graph.
+def _build_consumer_graph(consumer_dep_on, *, resolve_swappable_to_consumer):
+    """Build a real toolkit migration graph plus a synthetic consumer node.
 
-    The bug: a consumer app whose own ``0001_initial`` both (a) defines
-    ``AUTH_USER_MODEL`` and (b) has a FK to ``CloudflareImage`` -- so
-    ``consumer.0001`` depends on ``toolkit.0001``. Before this fix,
-    ``toolkit.0001`` also carried ``swappable_dependency(AUTH_USER_MODEL)``,
-    i.e. a dependency back on ``consumer.0001`` -- an unresolvable cycle.
+    ``consumer_dep_on`` is the toolkit migration name the consumer's
+    ``0001_initial`` depends on (its FK to ``CloudflareImage``). Every toolkit
+    migration is added with its *real* on-disk dependencies; intra-app edges
+    and (optionally) the swappable ``AUTH_USER_MODEL`` edge are wired, so the
+    graph reflects what Django actually builds rather than a hand-picked shape.
 
-    Rather than re-deriving this from Django's swappable-model machinery
-    (which requires a fully configured, real ``AUTH_USER_MODEL`` app), this
-    builds a minimal standalone graph with exactly that shape and checks
-    ``ensure_not_cyclic()`` -- the same check ``MigrationLoader.build_graph()``
-    runs -- twice: once with the toolkit's *current* (real, on-disk)
-    dependencies for ``0001_initial`` (must pass), and once with the *old*
-    pre-fix shape reinstated (must fail), so this test would have caught the
-    original bug and will catch a regression back to it.
+    When ``resolve_swappable_to_consumer`` is True the swappable dependency
+    resolves to ``consumer_app.0001_initial`` -- i.e. the consumer app is the
+    one that defines ``AUTH_USER_MODEL`` (the pathological case). External
+    (contenttypes/auth) dependencies are skipped; they don't participate in the
+    consumer<->toolkit cycle.
     """
-    from django.db.migrations.graph import CircularDependencyError, MigrationGraph
+    from django.db.migrations.graph import MigrationGraph
     from django.db.migrations.loader import MigrationLoader
 
     loader = MigrationLoader(None, ignore_no_migrations=True)
-    current_dependencies = loader.disk_migrations[
-        (APP_LABEL, "0001_initial")
-    ].dependencies
+    toolkit_keys = sorted(k for k in loader.disk_migrations if k[0] == APP_LABEL)
 
-    def build_graph(toolkit_dependencies):
-        graph = MigrationGraph()
-        graph.add_node(("consumer_app", "0001_initial"), None)
-        graph.add_node((APP_LABEL, "0001_initial"), None)
-        # consumer.0001 -> toolkit.0001 (the consumer's FK to CloudflareImage)
-        graph.add_dependency(
-            "consumer_app.0001_initial",
-            ("consumer_app", "0001_initial"),
-            (APP_LABEL, "0001_initial"),
-        )
-        for dep in toolkit_dependencies:
-            if dep[0] == "__setting__":
-                # Simulate the swappable AUTH_USER_MODEL dependency resolving
-                # to the app that defines it -- here, consumer_app itself.
-                dep = ("consumer_app", "0001_initial")
+    graph = MigrationGraph()
+    consumer = ("consumer_app", "0001_initial")
+    graph.add_node(consumer, None)
+    for key in toolkit_keys:
+        graph.add_node(key, None)
+
+    # consumer.0001 -> toolkit.<consumer_dep_on> (the consumer's FK edge).
+    graph.add_dependency(None, consumer, (APP_LABEL, consumer_dep_on))
+
+    for key in toolkit_keys:
+        for dep in loader.disk_migrations[key].dependencies:
+            # A swappable AUTH_USER_MODEL dependency is a ``SwappableTuple``
+            # carrying ``.setting`` (e.g. "auth.User"); by load time it has
+            # already resolved to the *current* user model's app (``auth`` in
+            # the test env), so detect it by that attribute rather than by the
+            # "__setting__" sentinel, which is gone.
+            if getattr(dep, "setting", None) is not None:
+                if not resolve_swappable_to_consumer:
+                    continue
+                dep = consumer  # AUTH_USER_MODEL lives in the consumer app.
+            elif dep[0] != APP_LABEL:
+                continue  # skip external (contenttypes/auth) edges.
             if dep not in graph.node_map:
                 graph.add_node(dep, None)
-            # toolkit.0001 -> whatever it declares as a dependency.
-            graph.add_dependency(
-                f"{APP_LABEL}.0001_initial", (APP_LABEL, "0001_initial"), dep
-            )
-        return graph
+            graph.add_dependency(None, key, dep)
+    return graph, toolkit_keys
 
-    # Current shape: toolkit.0001 has no dependencies at all -> no cycle.
-    build_graph(current_dependencies).ensure_not_cyclic()
 
-    # Old (pre-fix) shape: toolkit.0001 also depended on the swappable user
-    # model, which in this scenario is consumer_app.0001_initial -> cycle.
+def test_consumer_pinned_to_0001_has_no_circular_dependency():
+    """The supported resolution: consumer depends on toolkit ``0001_initial``.
+
+    This is the edge the restructuring exists to make safe. Because
+    ``0001_initial`` is now dependency-free, a consumer app that defines
+    ``AUTH_USER_MODEL`` and FKs ``CloudflareImage`` from the same initial
+    migration can depend on ``toolkit.0001`` with no cycle -- verified with the
+    toolkit's real on-disk dependencies. (Before this change ``0001`` carried
+    the swappable dependency itself, so even this edge cycled and no consumer
+    edit could fix it.)
+    """
+    graph, _ = _build_consumer_graph("0001_initial", resolve_swappable_to_consumer=True)
+    graph.ensure_not_cyclic()  # must not raise
+
+
+def test_consumer_pinned_to_leaf_still_cycles():
+    """Honest documentation of the residual Django limitation.
+
+    Django's autodetector pins a consumer's FK-to-CloudflareImage dependency to
+    the toolkit's *leaf* migration, not to ``0001`` where the model is created
+    (``MigrationAutodetector._build_migration_list`` -> ``graph.leaf_nodes()``).
+    The leaf transitively depends on ``0007``, which depends on
+    ``AUTH_USER_MODEL`` (the consumer), so the auto-generated graph still
+    cycles. The toolkit cannot change that resolution; consumers must pin to
+    ``0001`` (see README / 0007 docstring). This test asserts the limitation is
+    real so the docs can't silently drift from behavior.
+    """
+    from django.db.migrations.graph import CircularDependencyError
+
+    _, toolkit_keys = _build_consumer_graph(
+        "0001_initial", resolve_swappable_to_consumer=True
+    )
+    leaf_name = toolkit_keys[-1][1]
+    assert leaf_name == "0007_cloudflareimage_user"
+
+    graph, _ = _build_consumer_graph(leaf_name, resolve_swappable_to_consumer=True)
     with pytest.raises(CircularDependencyError):
-        build_graph([("__setting__", "AUTH_USER_MODEL")]).ensure_not_cyclic()
+        graph.ensure_not_cyclic()
