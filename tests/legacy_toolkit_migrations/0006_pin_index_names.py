@@ -12,17 +12,6 @@ state and the migration state agree and ``makemigrations`` is a no-op. Existing
 databases are renamed in place; fresh databases create the original names in
 ``0001``/``0003`` and are renamed here, so every database converges to the same
 names regardless of install age.
-
-NOTE: The rename for the ``user``+``status`` index
-(``cloudflare_i_user_id_b8c8a5_idx`` -> ``cfimg_user_status_idx``) that used to
-live here has been removed. ``0001_initial`` no longer creates the ``user``
-field or that index at all (see the note there and in
-``0007_cloudflareimage_user``), so on a fresh install there is nothing named
-``cloudflare_i_user_id_b8c8a5_idx`` to rename by the time this migration runs;
-``0007`` creates that index directly under its final name instead. This is
-safe for already-installed databases: this migration already ran there with
-the rename included, and editing already-applied migration content has no
-effect on them.
 """
 
 from django.db import migrations
@@ -35,6 +24,11 @@ class Migration(migrations.Migration):
 
     operations = [
         # CloudflareImage (created in 0001)
+        migrations.RenameIndex(
+            model_name="cloudflareimage",
+            new_name="cfimg_user_status_idx",
+            old_name="cloudflare_i_user_id_b8c8a5_idx",
+        ),
         migrations.RenameIndex(
             model_name="cloudflareimage",
             new_name="cfimg_status_created_idx",
