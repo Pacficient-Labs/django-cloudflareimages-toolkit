@@ -69,16 +69,35 @@ def _fresh_sqlite_alias(alias, tmp_path, db_name):
     return alias
 
 
+def _indexes_on(connection, table, columns):
+    """Return the names of every index on ``table`` covering exactly ``columns``.
+
+    Used to prove convergence: after upgrade there must be exactly one index
+    on ``(user_id, status)``, under the pinned name -- no legacy duplicate.
+    """
+    with connection.cursor() as cursor:
+        constraints = connection.introspection.get_constraints(cursor, table)
+    return [
+        name
+        for name, c in constraints.items()
+        if c.get("index") and c.get("columns") == columns
+    ]
+
+
 def _teardown_alias(alias):
+    # This runs in a test's ``finally``; it must never raise, or it would
+    # mask the real failure. ``ConnectionHandler.__delitem__`` can raise
+    # either ``AttributeError`` or ``KeyError`` depending on whether the
+    # per-thread connection was ever opened, so both are swallowed.
     try:
         connections[alias].close()
     except Exception:
         pass
     try:
         del connections[alias]
-    except AttributeError:
+    except (AttributeError, KeyError):
         pass  # connection was registered but never actually opened
-    del settings.DATABASES[alias]
+    settings.DATABASES.pop(alias, None)
 
 
 def test_upgrade_from_pre_restructure_install(tmp_path, settings, django_db_blocker):
@@ -157,8 +176,85 @@ def test_upgrade_from_pre_restructure_install(tmp_path, settings, django_db_bloc
             # No duplicate column: still exactly one `user_id`.
             assert list(columns_after).count("user_id") == 1
             assert "cfimg_user_status_idx" in constraints_after
+            # Exactly one index on (user_id, status), under the pinned name.
+            idx = _indexes_on(
+                connections[alias], "cloudflare_images", ["user_id", "status"]
+            )
+            assert idx == ["cfimg_user_status_idx"], idx
 
             # Re-running migrate is a no-op: nothing pending, nothing errors.
+            call_command("migrate", APP_LABEL, database=alias, verbosity=0)
+        finally:
+            settings.MIGRATION_MODULES = {}
+            _teardown_alias(alias)
+
+
+def test_upgrade_from_pre_restructure_install_without_legacy_0006(
+    tmp_path, settings, django_db_blocker
+):
+    """Upgrade from an install that applied legacy 0001-0005 but NOT 0006.
+
+    This is the edge Copilot flagged: such a database still has the user index
+    under its original auto-generated name ``cloudflare_i_user_id_b8c8a5_idx``
+    (legacy 0006's rename never ran, and the edited 0006 no longer performs
+    it). If 0007 only checked for the pinned name it would create a *second*
+    index on the same columns. The ``legacy_names`` handling must instead
+    converge to a single index under the pinned name.
+    """
+    from django.core.management import call_command
+
+    alias = _fresh_sqlite_alias("legacy_no6", tmp_path, "legacy_no6.sqlite3")
+    with django_db_blocker.unblock():
+        try:
+            call_command("migrate", "contenttypes", database=alias, verbosity=0)
+            call_command("migrate", "auth", database=alias, verbosity=0)
+            settings.MIGRATION_MODULES = {
+                APP_LABEL: "tests.legacy_toolkit_migrations",
+            }
+            # Stop at 0005 -- deliberately do NOT apply legacy 0006.
+            call_command(
+                "migrate",
+                APP_LABEL,
+                "0005_backfill_last_referenced_at",
+                database=alias,
+                verbosity=0,
+            )
+
+            recorder = MigrationRecorder(connections[alias])
+            applied = {n for a, n in recorder.applied_migrations() if a == APP_LABEL}
+            assert "0005_backfill_last_referenced_at" in applied
+            assert "0006_pin_index_names" not in applied
+
+            # Precondition: the index exists under its *legacy* name only.
+            legacy_idx = _indexes_on(
+                connections[alias], "cloudflare_images", ["user_id", "status"]
+            )
+            assert legacy_idx == ["cloudflare_i_user_id_b8c8a5_idx"], legacy_idx
+
+            # Upgrade the package: run the real 0006 (edited) + 0007.
+            settings.MIGRATION_MODULES = {}
+            call_command("migrate", APP_LABEL, database=alias, verbosity=0)
+
+            applied = {n for a, n in recorder.applied_migrations() if a == APP_LABEL}
+            assert {"0006_pin_index_names", "0007_cloudflareimage_user"} <= applied
+
+            # Convergence: exactly one index on the columns, pinned name, no
+            # leftover legacy-named duplicate.
+            idx = _indexes_on(
+                connections[alias], "cloudflare_images", ["user_id", "status"]
+            )
+            assert idx == ["cfimg_user_status_idx"], idx
+
+            with connections[alias].cursor() as cursor:
+                cols = [
+                    c.name
+                    for c in connections[alias].introspection.get_table_description(
+                        cursor, "cloudflare_images"
+                    )
+                ]
+            assert cols.count("user_id") == 1
+
+            # Idempotent re-run.
             call_command("migrate", APP_LABEL, database=alias, verbosity=0)
         finally:
             settings.MIGRATION_MODULES = {}
