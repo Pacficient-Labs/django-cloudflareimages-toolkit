@@ -164,18 +164,19 @@ def test_upgrade_from_pre_restructure_install(tmp_path, settings, django_db_bloc
             assert "0007_cloudflareimage_user" in applied_after
 
             with connections[alias].cursor() as cursor:
-                columns_after = {
+                # A list (not a set) so the occurrence count below is meaningful.
+                columns_after = [
                     col.name
                     for col in connections[alias].introspection.get_table_description(
                         cursor, "cloudflare_images"
                     )
-                }
+                ]
                 constraints_after = connections[alias].introspection.get_constraints(
                     cursor, "cloudflare_images"
                 )
 
             # No duplicate column: still exactly one `user_id`.
-            assert list(columns_after).count("user_id") == 1
+            assert columns_after.count("user_id") == 1
             assert "cfimg_user_status_idx" in constraints_after
             # Exactly one index on (user_id, status), under the pinned name.
             idx = _indexes_on(
@@ -347,11 +348,16 @@ def test_consumer_pinned_to_leaf_still_cycles():
     Django's autodetector pins a consumer's FK-to-CloudflareImage dependency to
     the toolkit's *leaf* migration, not to ``0001`` where the model is created
     (``MigrationAutodetector._build_migration_list`` -> ``graph.leaf_nodes()``).
-    The leaf transitively depends on ``0007``, which depends on
-    ``AUTH_USER_MODEL`` (the consumer), so the auto-generated graph still
-    cycles. The toolkit cannot change that resolution; consumers must pin to
-    ``0001`` (see README / 0007 docstring). This test asserts the limitation is
-    real so the docs can't silently drift from behavior.
+    The leaf transitively depends on the migration that adds the ``user`` FK,
+    which depends on ``AUTH_USER_MODEL`` (the consumer), so the auto-generated
+    graph still cycles. The toolkit cannot change that resolution; consumers
+    must pin to ``0001`` (see README / 0007 docstring). This test asserts the
+    limitation is real so the docs can't silently drift from behavior.
+
+    Uses whatever migration is currently the leaf (not a hard-coded name) so
+    adding a future ``0008_...`` doesn't spuriously break it -- the cycle holds
+    for any leaf, since every leaf descends from the swappable-dependent
+    migration.
     """
     from django.db.migrations.graph import CircularDependencyError
 
@@ -359,7 +365,6 @@ def test_consumer_pinned_to_leaf_still_cycles():
         "0001_initial", resolve_swappable_to_consumer=True
     )
     leaf_name = toolkit_keys[-1][1]
-    assert leaf_name == "0007_cloudflareimage_user"
 
     graph, _ = _build_consumer_graph(leaf_name, resolve_swappable_to_consumer=True)
     with pytest.raises(CircularDependencyError):
