@@ -411,12 +411,20 @@ def test_consumer_pinned_to_leaf_still_cycles():
 _CONSUMER_APP = "consumer_userapp"
 
 _CONSUMER_MODELS = """
+from django.contrib.auth.models import AbstractBaseUser
 from django.db import models
 
 
-class User(models.Model):
-    # Stand-in swappable AUTH_USER_MODEL, defined in this app's 0001_initial.
-    username = models.CharField(max_length=150)
+class User(AbstractBaseUser):
+    # A valid swappable AUTH_USER_MODEL for this app's 0001_initial. Subclassing
+    # AbstractBaseUser satisfies django.contrib.auth's check_user_model
+    # (USERNAME_FIELD, REQUIRED_FIELDS, is_anonymous/is_authenticated, unique
+    # username), so the child commands never depend on system checks being
+    # skipped. AbstractBaseUser adds only password and last_login and no
+    # relations, so the migration dependency topology, and the cycle, are
+    # unchanged.
+    username = models.CharField(max_length=150, unique=True)
+    USERNAME_FIELD = "username"
 
 
 class UserProfile(models.Model):
