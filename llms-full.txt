@@ -872,6 +872,9 @@ your project, or use the string-returning `cf_responsive_image` / `cf_srcset` /
 
 ## Changelog
 
+### Version 1.1.2
+- Documentation updates
+
 ### Version 1.1.1
 - Full documentation audit and corrections (see CHANGELOG.md)
 - Fixed over-long migration index names (Django models.E034); added
