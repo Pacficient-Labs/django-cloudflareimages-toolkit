@@ -225,7 +225,7 @@ django-cloudflareimages-toolkit/
 
 ## Version Information
 
-- **Current Version**: 1.1.1
+- **Current Version**: 1.1.2
 - **Python Support**: 3.10+
 - **Django Support**: 4.2+
 - **License**: MIT
