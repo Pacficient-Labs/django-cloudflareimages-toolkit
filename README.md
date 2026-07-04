@@ -606,46 +606,30 @@ Reverse index mapping each image to the content that references it (see
 
 ### Referencing CloudflareImage from a custom user model
 
-`CloudflareImage.user` is a `ForeignKey` to `settings.AUTH_USER_MODEL`. That
-foreign key lives in migration `0007_cloudflareimage_user`, **not** in
-`0001_initial` — `0001_initial` creates the `CloudflareImage` table with **no**
-dependency on your user model. This is deliberate: it lets you reference
-`CloudflareImage` from the very migration that defines your custom user model.
+`CloudflareImage` has a `ForeignKey` to your `AUTH_USER_MODEL`. If your app
+references `CloudflareImage` from the same initial migration that defines your
+user model, for example a `UserProfile.avatar` FK in the migration that also
+creates your custom user, `makemigrations` points that FK at this app's latest
+migration and you get a `CircularDependencyError`.
 
-Most projects need no special handling. You only have to do anything if the
-**same migration that defines your `AUTH_USER_MODEL`** (or another model created
-alongside it) has a `ForeignKey` to `CloudflareImage`. In that case Django's
-autodetector will, by default, make your migration depend on this app's
-*latest* migration (`0007_cloudflareimage_user`). Because `0007` in turn
-depends on your user model, that creates a circular dependency:
-
-```
-yourapp.0001  ->  toolkit.0007  (Django's default: depend on the latest migration)
-toolkit.0007  ->  yourapp.0001  (0007 adds the FK to AUTH_USER_MODEL)
-```
-
-Django cannot resolve which migration to depend on for you here — only you know
-that your user-model migration merely needs the `CloudflareImage` **table** to
-exist, which happens in `0001_initial`. Point the dependency there instead:
+Pin the dependency to this app's initial migration instead:
 
 ```python
 class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        # Depend on the migration that CREATES CloudflareImage, not the
-        # auto-generated dependency on the latest toolkit migration. 0001 is
-        # dependency-free, so this cannot form a circular dependency.
         ("django_cloudflareimages_toolkit", "0001_initial"),
         # ... your other dependencies (auth, contenttypes, etc.)
     ]
     operations = [ ... ]
 ```
 
-If `makemigrations` generated a dependency on `0007_cloudflareimage_user` (or
-whatever the current latest toolkit migration is), replace it with
-`0001_initial`. The user FK on `CloudflareImage` is then added afterward by
-`0007`, which runs once your user table exists.
+Use `0001_initial` because the `CloudflareImage` table is created there, which
+is all your foreign key needs, and `0001_initial` has no dependency on your user
+model, so it cannot form a cycle. This is a one-time edit. It survives future
+`makemigrations` runs and database resets, because Django never rewrites the
+`dependencies` of a migration that already exists.
 
 ## Image Usage Registry (SSOT)
 
