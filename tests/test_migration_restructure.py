@@ -25,7 +25,7 @@ databases and the real migration executor (not hand-rolled DDL assertions):
 from __future__ import annotations
 
 import os
-import subprocess
+import subprocess  # nosec B404: only runs an isolated test child, see _run_consumer_child
 import sys
 from pathlib import Path
 from textwrap import dedent
@@ -524,8 +524,18 @@ elif MODE == "fix":
     path = os.path.join(os.environ["CHILD_APP_DIR"], "migrations", "0001_initial.py")
     with open(path) as fh:
         text = fh.read()
-    assert leaf[1] in text, "leaf %s not present in generated migration" % (leaf[1],)
-    text = text.replace(leaf[1], "0001_initial")
+    # Repoint only the toolkit dependency, matching the migration name as a
+    # quoted token (chr(34)=double quote, chr(39)=single) so a stray occurrence
+    # of the name in a comment or metadata can never be touched. Replace the
+    # first match only and assert one was found.
+    _repointed = False
+    for _q in (chr(34), chr(39)):
+        _tok = _q + leaf[1] + _q
+        if _tok in text:
+            text = text.replace(_tok, _q + "0001_initial" + _q, 1)
+            _repointed = True
+            break
+    assert _repointed, "leaf %s not found as a quoted dependency token" % (leaf[1],)
     with open(path, "w") as fh:
         fh.write(text)
     # Drop any cached consumer migration module so the executor re-imports the
@@ -574,11 +584,16 @@ def _run_consumer_child(mode: str, base_dir: Path, app_dir: Path, tmp_path: Path
     env["PYTHONPATH"] = os.pathsep.join([str(repo_root), str(base_dir)])
     env["CHILD_DB"] = str(tmp_path / f"{mode}.sqlite3")
     env["CHILD_APP_DIR"] = str(app_dir)
-    return subprocess.run(
+    # nosec B603: fixed interpreter (sys.executable) with a static argv list, no
+    # shell and no untrusted input. stdin is closed and a timeout is set so a
+    # stuck child fails fast instead of hanging the suite.
+    return subprocess.run(  # nosec B603
         [sys.executable, str(child), mode],
         capture_output=True,
         text=True,
         env=env,
+        stdin=subprocess.DEVNULL,
+        timeout=300,
     )
 
 

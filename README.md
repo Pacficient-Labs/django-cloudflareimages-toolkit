@@ -609,10 +609,11 @@ Reverse index mapping each image to the content that references it (see
 `CloudflareImage` has a `ForeignKey` to your `AUTH_USER_MODEL`. If your app
 references `CloudflareImage` from the same initial migration that defines your
 user model, for example a `UserProfile.avatar` FK in the migration that also
-creates your custom user, `makemigrations` points that FK at this app's latest
-migration and you get a `CircularDependencyError`.
+creates your custom user, `makemigrations` points that FK at the latest
+`django_cloudflareimages_toolkit` migration and you get a
+`CircularDependencyError`.
 
-Pin the dependency to this app's initial migration instead:
+Pin the dependency to `django_cloudflareimages_toolkit`'s `0001_initial` instead:
 
 ```python
 class Migration(migrations.Migration):
@@ -626,10 +627,11 @@ class Migration(migrations.Migration):
 ```
 
 Use `0001_initial` because the `CloudflareImage` table is created there, which
-is all your foreign key needs, and `0001_initial` has no dependency on your user
-model, so it cannot form a cycle. This is a one-time edit. It survives future
-`makemigrations` runs and database resets, because Django never rewrites the
-`dependencies` of a migration that already exists.
+is all your foreign key needs, and `django_cloudflareimages_toolkit`'s
+`0001_initial` has no dependency on your user model, so it cannot form a cycle.
+This is a one-time edit. It survives future `makemigrations` runs and database
+resets, because Django never rewrites the `dependencies` of a migration that
+already exists.
 
 ## Image Usage Registry (SSOT)
 
