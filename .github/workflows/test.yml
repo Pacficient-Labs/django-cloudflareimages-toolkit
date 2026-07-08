@@ -9,10 +9,33 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Keep `uv run` from re-syncing the pinned lockfile Django back over the
+    # matrix version we install below. `uv pip install` puts the requested
+    # Django into the synced venv, but a bare `uv run` would revert it to
+    # uv.lock's version before running; UV_NO_SYNC makes `uv run` use the venv
+    # as-is. (Explicit `uv sync`/`uv pip install` are unaffected by this.)
+    env:
+      UV_NO_SYNC: "1"
     strategy:
+      fail-fast: false
       matrix:
+        # Test every Django series the package advertises support for in
+        # pyproject.toml's Framework classifiers (4.2 LTS, 5.1, 5.2 LTS, 6.0).
+        # 5.2 and 6.0 matter specifically for the pinned index-name guard in
+        # tests/test_migrations_ssot.py: Django's auto index-name algorithm
+        # differs across series, so `makemigrations --check` must be exercised
+        # on the newest ones or a naming-drift regression would ship undetected.
         python-version: ["3.10", "3.11", "3.12", "3.13"]
-        django-version: [4.2, 5.0, 5.1]
+        django-version: ["4.2", "5.1", "5.2", "6.0"]
+        exclude:
+          # Django 6.0 requires Python >= 3.12.
+          - python-version: "3.10"
+            django-version: "6.0"
+          - python-version: "3.11"
+            django-version: "6.0"
+          # Django 4.2 does not support Python 3.13.
+          - python-version: "3.13"
+            django-version: "4.2"
 
     steps:
     - uses: actions/checkout@v7
@@ -28,7 +51,12 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --extra dev
-        uv add "Django~=${{ matrix.django-version }}.0"
+        # Install the matrix Django with `uv pip install`, not `uv add`.
+        # `uv add` edits pyproject.toml and resolves universally across the
+        # project's whole requires-python range (>=3.10); Django 6.0 requires
+        # >=3.12, so that resolution is unsatisfiable even when the active
+        # interpreter is 3.12. `uv pip install` only targets the active venv.
+        uv pip install "Django~=${{ matrix.django-version }}.0"
 
     - name: Run Django checks
       run: |
