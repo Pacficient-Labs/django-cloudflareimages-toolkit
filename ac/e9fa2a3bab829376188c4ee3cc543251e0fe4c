@@ -1,0 +1,23 @@
+django_cloudflareimages_toolkit/__init__.py
+  s_7ab3ecfe8d2b04::t_943674164b6976 10
+pyproject.toml
+  s_7ab3ecfe8d2b04::t_40e6e4cbf72109 7
+CHANGELOG.md
+  s_7ab3ecfe8d2b04::t_c3178874cfa43c 12-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ace9fa2a3bab829376188c4ee3cc543251e0fe4c",
+  "prompts": {},
+  "sessions": {
+    "s_7ab3ecfe8d2b04": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "54effe84-d4ff-4c3a-a1a4-ea0b632c3c78",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "pacnpal <183241239+pacnpal@users.noreply.github.com>"
+    }
+  }
+}
