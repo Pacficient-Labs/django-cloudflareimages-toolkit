@@ -1,0 +1,21 @@
+tests/test_migration_restructure.py
+  s_7ab3ecfe8d2b04::t_98d9ea1bc535b1 411-414,420,429-432
+  s_7ab3ecfe8d2b04::t_a865e55982c7d3 41,43
+  s_7ab3ecfe8d2b04::t_e0ccb1186b6470 113-114,116-120,122-134,137,144,151-152,158-159,165,172-173,179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "10a05bc300cdb303feb968253fd745ebb76a9229",
+  "prompts": {},
+  "sessions": {
+    "s_7ab3ecfe8d2b04": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "54effe84-d4ff-4c3a-a1a4-ea0b632c3c78",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "pacnpal <183241239+pacnpal@users.noreply.github.com>"
+    }
+  }
+}
