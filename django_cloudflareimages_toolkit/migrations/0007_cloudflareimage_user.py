@@ -44,17 +44,18 @@ physical states of that index when this migration runs:
   ``(user, status)`` exists; ``AddIndexIfMissing`` creates it under the
   pinned name ``cfimg_user_status_idx``.
 * **upgrade that applied legacy ``0006``** -- legacy ``0001`` created the
-  index as ``cloudflare_i_user_id_b8c8a5_idx`` and legacy ``0006`` already
-  renamed it to ``cfimg_user_status_idx``; the pinned name is present, so we
-  skip.
+  index and legacy ``0006`` already renamed it to ``cfimg_user_status_idx``;
+  the pinned name is present, so we skip.
 * **upgrade that applied legacy ``0001``-``0005`` but NOT legacy ``0006``**
-  -- the index still exists under its original auto-generated name
-  ``cloudflare_i_user_id_b8c8a5_idx``. Our edited ``0006`` no longer renames
-  it (that rename was removed along with the field), so if we only checked
-  for the pinned name we would create a *second* index on the same columns.
-  Instead, ``AddIndexIfMissing`` is given the legacy name via
-  ``legacy_names`` and RENAMEs the existing index to the pinned name,
-  converging every install to exactly one index under one name.
+  -- the index still exists under whatever name the installed Django version
+  auto-generated for it (``cloudflare_i_user_id_b8c8a5_idx`` on some versions,
+  ``cloudflare__user_id_...`` on others). Our edited ``0006`` no longer
+  renames it (that rename was removed along with the field), so if we only
+  checked for the pinned name we would create a *second* index on the same
+  columns. Instead, ``AddIndexIfMissing`` finds the existing index **by its
+  columns** (not by a hard-coded name, which is version-dependent) and
+  RENAMEs it to the pinned name, converging every install to exactly one
+  index under one name.
 """
 
 import django.db.models.deletion
@@ -104,47 +105,64 @@ class AddFieldIfMissing(migrations.AddField):
 class AddIndexIfMissing(migrations.AddIndex):
     """``AddIndex`` that converges to the pinned name without duplicating.
 
-    If the pinned index name already exists, do nothing. Otherwise, if any
-    name in ``legacy_names`` exists on the table (the index created under an
-    older auto-generated name by a previous release), RENAME it to the pinned
-    name rather than creating a second index on the same columns. Only when
-    no equivalent index exists at all is a new one created.
+    If the pinned index name already exists, do nothing. Otherwise, if an index
+    on the *same columns* already exists under an older auto-generated name
+    (created by a previous release, under whatever name that Django version
+    produced), RENAME it to the pinned name rather than creating a second index
+    on the same columns. Only when no equivalent index exists at all is a new
+    one created.
+
+    Matching by columns rather than by a hard-coded legacy name is what makes
+    this survive Django's version-dependent index naming: the physical name a
+    past release left behind varies by version, but the columns do not.
     """
 
-    def __init__(self, *args, legacy_names=(), **kwargs):
-        self.legacy_names = tuple(legacy_names)
-        super().__init__(*args, **kwargs)
-
-    def deconstruct(self):
-        name, args, kwargs = super().deconstruct()
-        if self.legacy_names:
-            kwargs["legacy_names"] = self.legacy_names
-        return name, args, kwargs
-
-    def _existing_index_names(self, schema_editor, table_name):
+    def _constraints(self, schema_editor, table_name):
         with schema_editor.connection.cursor() as cursor:
-            return set(
-                schema_editor.connection.introspection.get_constraints(
-                    cursor, table_name
-                )
+            return schema_editor.connection.introspection.get_constraints(
+                cursor, table_name
             )
+
+    def _legacy_index_name(self, constraints, model):
+        """Name of the pre-existing index on this index's columns, or ``None``.
+
+        Matches by columns so it converges no matter which Django version
+        auto-generated the original name. Only ``_idx`` names are considered:
+        Django suffixes ``Meta.indexes`` names with ``_idx`` but not the
+        implicit index of a ``db_index=True`` field, so a single-column
+        ``Meta`` index is never confused with that field's own index.
+        """
+        columns = [
+            model._meta.get_field(name.lstrip("-")).column for name in self.index.fields
+        ]
+        matches = [
+            name
+            for name, info in constraints.items()
+            if info.get("index")
+            and not info.get("unique")
+            and not info.get("primary_key")
+            and not info.get("foreign_key")
+            and list(info.get("columns") or []) == columns
+            and name.endswith("_idx")
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
         model = to_state.apps.get_model(app_label, self.model_name)
         if not self.allow_migrate_model(schema_editor.connection.alias, model):
             return
-        existing = self._existing_index_names(schema_editor, model._meta.db_table)
-        if self.index.name in existing:
+        constraints = self._constraints(schema_editor, model._meta.db_table)
+        if self.index.name in constraints:
             return
-        for legacy in self.legacy_names:
-            if legacy in existing:
-                # Same columns, older name: converge in place instead of
-                # creating a duplicate. rename_index renames on backends that
-                # support it and drops+recreates on those that don't (e.g.
-                # SQLite); both need only the index name and fields.
-                old_index = models.Index(fields=self.index.fields, name=legacy)
-                schema_editor.rename_index(model, old_index, self.index)
-                return
+        legacy = self._legacy_index_name(constraints, model)
+        if legacy is not None:
+            # Same columns, older auto-generated name: converge in place instead
+            # of creating a duplicate. rename_index renames on backends that
+            # support it and drops+recreates on those that don't (e.g. SQLite);
+            # both need only the index name and fields.
+            old_index = models.Index(fields=self.index.fields, name=legacy)
+            schema_editor.rename_index(model, old_index, self.index)
+            return
         super().database_forwards(app_label, schema_editor, from_state, to_state)
 
     def database_backwards(self, app_label, schema_editor, from_state, to_state):
@@ -176,8 +194,5 @@ class Migration(migrations.Migration):
         AddIndexIfMissing(
             model_name="cloudflareimage",
             index=models.Index(fields=["user", "status"], name="cfimg_user_status_idx"),
-            # The original auto-generated name from legacy 0001, in case this
-            # install never applied legacy 0006's rename before upgrading.
-            legacy_names=["cloudflare_i_user_id_b8c8a5_idx"],
         ),
     ]
