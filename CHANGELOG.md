@@ -9,6 +9,29 @@ Release notes are also published on
 
 ## [Unreleased]
 
+### Fixed
+
+- **`0006_pin_index_names` aborted `migrate` on databases created under a
+  different Django version.** `0006` renamed each index with a plain
+  `RenameIndex(old_name="cloudflare_i_status_0b7e8c_idx")`, a hard-coded
+  physical name. But the original `0001`/`0003` shipped their `Meta.indexes`
+  without an explicit `name=`, so Django auto-generated that name at apply
+  time, and its output changed across Django versions (the prefix flipped
+  `cloudflare_i_` to `cloudflare__` and the hash changed). On a database whose
+  indexes were first created under Django 6, four of those `old_name` strings
+  don't exist, so `migrate` blew up with `UndefinedTable`/`ProgrammingError`
+  and never finished. That's the exact drift `0006` was supposed to repair, so
+  it couldn't survive it. `0006` now finds each index by the columns it covers
+  and renames whatever is actually there, which is version-independent. `0007`
+  had the same flaw for its `(user, status)` index (it recognized only one
+  legacy name and would create a duplicate index on a Django-6 database) and
+  now matches by columns too. A single column that also carries `db_index=True`
+  (e.g. `ImageUsage.cloudflare_id`) has two indexes; the `Meta` one is picked
+  by its `_idx` suffix, so no model change or dropped index was needed. Fresh
+  installs were never affected. Added an end-to-end regression test that
+  simulates the version drift and proves every index converges to one pinned
+  name.
+
 ### Changed
 
 - **CI now tests the Django series the package advertises.** The test matrix
