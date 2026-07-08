@@ -1,0 +1,32 @@
+django_cloudflareimages_toolkit/migrations/0006_pin_index_names.py
+  s_7ab3ecfe8d2b04::t_5863659e1f2b08 16-36,49-66,68-124,134,139,145,150,156,161
+  s_7ab3ecfe8d2b04::t_28363e453ca453 67
+CHANGELOG.md
+  s_7ab3ecfe8d2b04::t_b1f51aedaae6ec 12-34
+django_cloudflareimages_toolkit/migrations/0007_cloudflareimage_user.py
+  s_7ab3ecfe8d2b04::t_a3a4e596d55ed1 108-113,115-118,120,122-123,126-135,137-149,154-164
+  s_7ab3ecfe8d2b04::t_550c0f396cde7e 47-48,50-58
+  s_7ab3ecfe8d2b04::t_28363e453ca453 136
+tests/test_migration_restructure.py
+  s_7ab3ecfe8d2b04::t_12635ff1eae363 4,7-12
+  s_7ab3ecfe8d2b04::t_11a7b779cb0a79 101-129,179-181
+  s_7ab3ecfe8d2b04::t_28363e453ca453 130-178
+  s_7ab3ecfe8d2b04::t_478cba6b03c2e3 360-433
+  s_7ab3ecfe8d2b04::t_9353e9afb63bd3 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "07a85ca679c23c63268ce174fae28251f872b5c3",
+  "prompts": {},
+  "sessions": {
+    "s_7ab3ecfe8d2b04": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "54effe84-d4ff-4c3a-a1a4-ea0b632c3c78",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "pacnpal <183241239+pacnpal@users.noreply.github.com>"
+    }
+  }
+}
