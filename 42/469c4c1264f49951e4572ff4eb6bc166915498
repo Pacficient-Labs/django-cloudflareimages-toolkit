@@ -1,0 +1,23 @@
+llms-full.txt
+  s_7ab3ecfe8d2b04::t_3a3dd7fe98ffa8 875-880
+docs/conf.py
+  s_7ab3ecfe8d2b04::t_f606195a6b9f0f 23-24
+llms.txt
+  s_7ab3ecfe8d2b04::t_3e39fedcf840f6 228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "42469c4c1264f49951e4572ff4eb6bc166915498",
+  "prompts": {},
+  "sessions": {
+    "s_7ab3ecfe8d2b04": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "54effe84-d4ff-4c3a-a1a4-ea0b632c3c78",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "pacnpal <183241239+pacnpal@users.noreply.github.com>"
+    }
+  }
+}
