@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release notes are also published on
 [GitHub Releases](https://github.com/Pacficient-Labs/django-cloudflareimages-toolkit/releases).
 
+## [Unreleased]
+
+### Changed
+
+- **CI now tests the Django series the package advertises.** The test matrix
+  topped out at Django 5.1, so the migration drift guard in
+  `tests/test_migrations_ssot.py` (`makemigrations --check`) — the test that
+  protects against the `0006_pin_index_names` regression — never ran on
+  Django 5.2 or 6.0, even though `pyproject.toml` lists
+  `Framework :: Django :: 5.2` and `6.0`. Django's auto index-name algorithm
+  differs across series, so an index-name drift could ship undetected on 6.0.
+  The matrix now covers 4.2, 5.1, 5.2, and 6.0 (dropping EOL 5.0, which is no
+  longer classified), pairing each series only with the Python versions it
+  supports (6.0 needs ≥3.12). Verified: `makemigrations --check` reports no
+  changes and the full suite passes on Django 6.0.7/Python 3.13.
+
 ## [1.1.1] - 2026-06-23
 
 ### Fixed
