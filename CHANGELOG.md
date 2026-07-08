@@ -9,6 +9,8 @@ Release notes are also published on
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-07-08
+
 ### Fixed
 
 - **`0006_pin_index_names` aborted `migrate` on databases created under a
