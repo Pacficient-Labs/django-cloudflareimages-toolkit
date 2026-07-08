@@ -9,6 +9,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Keep `uv run` from re-syncing the pinned lockfile Django back over the
+    # matrix version we install below. `uv pip install` puts the requested
+    # Django into the synced venv, but a bare `uv run` would revert it to
+    # uv.lock's version before running; UV_NO_SYNC makes `uv run` use the venv
+    # as-is. (Explicit `uv sync`/`uv pip install` are unaffected by this.)
+    env:
+      UV_NO_SYNC: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -44,7 +51,12 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --extra dev
-        uv add "Django~=${{ matrix.django-version }}.0"
+        # Install the matrix Django with `uv pip install`, not `uv add`.
+        # `uv add` edits pyproject.toml and resolves universally across the
+        # project's whole requires-python range (>=3.10); Django 6.0 requires
+        # >=3.12, so that resolution is unsatisfiable even when the active
+        # interpreter is 3.12. `uv pip install` only targets the active venv.
+        uv pip install "Django~=${{ matrix.django-version }}.0"
 
     - name: Run Django checks
       run: |
