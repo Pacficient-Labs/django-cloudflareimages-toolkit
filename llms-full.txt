@@ -872,6 +872,12 @@ your project, or use the string-returning `cf_responsive_image` / `cf_srcset` /
 
 ## Changelog
 
+### Version 1.1.3
+- Fixed `migrate` aborting on databases created under a different Django
+  version: migrations `0006`/`0007` now rename indexes by the columns they
+  cover instead of hard-coded, version-specific names
+- Expanded CI to test Django 5.2 and 6.0
+
 ### Version 1.1.2
 - Documentation updates
 

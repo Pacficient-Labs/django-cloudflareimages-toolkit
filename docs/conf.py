@@ -20,8 +20,8 @@ django.setup()
 project = 'django-cloudflareimages-toolkit'
 copyright = '2026, PacNPal and Pacficient Labs'
 author = 'PacNPal and Pacficient Labs'
-release = '1.1.2'
-version = '1.1.2'
+release = '1.1.3'
+version = '1.1.3'
 
 # -- General configuration ---------------------------------------------------
 extensions = [
