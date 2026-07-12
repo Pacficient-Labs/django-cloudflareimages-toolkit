@@ -12,7 +12,6 @@
   "platformAutomerge": true,
   "lockFileMaintenance": {
     "enabled": true,
-    "automerge": true,
     "schedule": ["* * * * 1"]
   },
   "packageRules": [
