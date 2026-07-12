@@ -1,6 +1,49 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
-  ]
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "timezone": "Etc/UTC",
+  "schedule": ["* 0-4 * * 1-5", "* * * * 0,6"],
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 10,
+  "platformAutomerge": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": ["* * * * 1"]
+  },
+  "packageRules": [
+    {
+      "description": "Automerge non-major updates for stable (>=1.0.0) dependencies once they pass tests",
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchCurrentVersion": "!/^0/",
+      "automerge": true
+    },
+    {
+      "description": "Automerge all updates for development dependencies",
+      "matchDepTypes": ["devDependencies", "dev"],
+      "automerge": true
+    },
+    {
+      "description": "Automerge GitHub Actions minor, patch, pin and digest updates",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Require Dependency Dashboard approval for major updates so they can be reviewed",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    }
+  ],
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "automerge": true,
+    "minimumReleaseAge": null
+  }
 }
