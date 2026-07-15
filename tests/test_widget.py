@@ -52,7 +52,7 @@ def test_render_uses_template_and_embeds_config():
 
     config = _config_from_html(html)
     assert config["api_endpoint"] == UPLOAD_PATH
-    assert config["allowed_formats"] == ["jpeg", "png", "gif", "webp"]
+    assert config["allowed_formats"] == ["jpeg", "png", "gif", "webp", "heic", "svg"]
 
 
 def test_render_escapes_unsafe_metadata_via_json_script():
