@@ -7,7 +7,7 @@ transformations, and management using Cloudflare Images.
 
 from typing import TYPE_CHECKING
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 __author__ = "PacNPal"
 
 # Always import Django-independent utilities
