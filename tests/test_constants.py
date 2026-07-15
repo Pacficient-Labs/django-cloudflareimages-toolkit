@@ -21,7 +21,7 @@ from django_cloudflareimages_toolkit.constants import (
 
 def test_default_allowed_formats_value():
     """The shared default is the documented jpeg/png/gif/webp set."""
-    assert DEFAULT_ALLOWED_FORMATS == ["jpeg", "png", "gif", "webp"]
+    assert DEFAULT_ALLOWED_FORMATS == ["jpeg", "png", "gif", "webp", "heic", "svg"]
 
 
 def test_field_and_widget_default_to_shared_constant():
