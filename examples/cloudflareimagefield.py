@@ -41,8 +41,8 @@ class Product(models.Model):
         metadata={'category': 'product'},
         require_signed_urls=False,
         max_file_size=5 * 1024 * 1024,  # 5MB
-        allowed_formats=['jpeg', 'png', 'webp'],
-        help_text="Product image (JPEG, PNG, or WebP, max 5MB)"
+        allowed_formats=['jpeg', 'png', 'webp', 'heic', 'svg'],
+        help_text="Product image (JPEG, PNG, HEIC, SVG, or WebP, max 5MB)"
     )
 
     def __str__(self):
