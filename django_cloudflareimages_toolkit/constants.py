@@ -16,7 +16,7 @@ before it is configured.
 # equality check that decides whether to serialize the kwarg into migrations)
 # and by ``CloudflareImageWidget``. Defined once so those callers can never
 # disagree about what "the default formats" are.
-DEFAULT_ALLOWED_FORMATS = ["jpeg", "png", "gif", "webp"]
+DEFAULT_ALLOWED_FORMATS = ["jpeg", "png", "gif", "webp", "heic", "svg"]
 
 # Cloudflare's hard bounds on a direct-upload URL's ``expiry`` window: the URL
 # must expire between 2 minutes and 6 hours (360 minutes) in the future. These
