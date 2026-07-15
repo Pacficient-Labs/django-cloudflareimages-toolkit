@@ -40,7 +40,7 @@ def test_field_default_does_not_alias_the_constant():
     field = CloudflareImageField()
     field.allowed_formats.append("tiff")
     # The shared constant is unchanged despite mutating one field's list.
-    assert DEFAULT_ALLOWED_FORMATS == ["jpeg", "png", "gif", "webp"]
+    assert DEFAULT_ALLOWED_FORMATS == ["jpeg", "png", "gif", "webp", "heic", "svg"]
 
 
 def test_deconstruct_omits_default_allowed_formats():
