@@ -39,7 +39,7 @@ class CloudflareImageFieldTest(TestCase):
         self.assertEqual(field.metadata, {})
         self.assertFalse(field.require_signed_urls)
         self.assertIsNone(field.max_file_size)
-        self.assertEqual(field.allowed_formats, ["jpeg", "png", "gif", "webp"])
+        self.assertEqual(field.allowed_formats, ["jpeg", "png", "gif", "webp", "heic", "svg"])
 
     def test_to_python_with_none(self):
         """Test to_python method with None value."""
