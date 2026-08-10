@@ -62,7 +62,17 @@ jobs:
         # project's whole requires-python range (>=3.10); Django 6.0 requires
         # >=3.12, so that resolution is unsatisfiable even when the active
         # interpreter is 3.12. `uv pip install` only targets the active venv.
-        uv pip install "Django~=${{ matrix.django-version }}.0"
+        #
+        # DRF is re-resolved alongside Django rather than left at the version
+        # uv.lock pinned: no single DRF release spans this matrix. DRF <= 3.17
+        # imports `django.utils.cache.cc_delim_re`, which Django 6.1 removed, so
+        # the 6.1 legs die at import; DRF >= 3.18 requires `django>=5.2`, so it
+        # cannot serve the 4.2 and 5.1 legs. Naming it alongside Django lets the
+        # resolver pick the newest DRF compatible with the pinned Django per leg
+        # (3.17.x for 4.2/5.1, 3.18.x for 6.1). `--upgrade` is what makes that
+        # happen at all: without it an already-installed DRF counts as
+        # satisfying the unconstrained requirement and is left as-is.
+        uv pip install --upgrade "Django~=${{ matrix.django-version }}.0" djangorestframework
 
     - name: Run Django checks
       run: |

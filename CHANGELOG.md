@@ -39,6 +39,17 @@ Release notes are also published on
   deprecation above shipped unnoticed. Added `Framework :: Django :: 6.1` and
   a `6.1` matrix leg (paired only with Python ≥ 3.12, which 6.1 requires).
 
+- **CI now resolves DRF per matrix leg instead of using the locked version.**
+  No single DRF release spans the supported Django range, so pinning one for
+  the whole matrix cannot work: DRF ≤ 3.17 imports
+  `django.utils.cache.cc_delim_re`, which Django 6.1 removed (every 6.1 job
+  died at import), while DRF ≥ 3.18 requires `django>=5.2` and so cannot serve
+  the 4.2 and 5.1 legs. The install step now names `djangorestframework`
+  alongside the matrix Django and passes `--upgrade`, letting the resolver pick
+  the newest compatible pair per leg (3.17.x for 4.2/5.1, 3.18.x for 6.1).
+  `--upgrade` is load-bearing: without it an already-installed DRF satisfies
+  the unconstrained requirement and is left untouched.
+
 ### Added
 
 - **`tests/test_admin_action_location.py`.** Asserts the override declares
@@ -46,9 +57,10 @@ Release notes are also published on
   version, that `delete_selected` is stripped for every `ActionLocation`
   member, and — on Django 6.1+ — that calling through Django's own
   `_get_actions_with_action_location()` entry point raises no deprecation
-  warning. Verified: the full suite (231 tests) passes on Django 6.1 with
-  `-W error::DeprecationWarning` and on Django 5.2, the new tests pass on
-  Django 4.2, and every new test fails against the old signature.
+  warning. Verified: the full suite passes on Django 6.1 (231 tests, with
+  `-W error::DeprecationWarning`), Django 5.2, and Django 4.2, each paired with
+  the DRF release that supports it; and every new test fails against the old
+  signature.
 
 ## [1.1.3] - 2026-07-08
 
