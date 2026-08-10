@@ -17,6 +17,21 @@ from .exceptions import CloudflareImagesError
 from .models import CloudflareImage, ImageUploadLog, ImageUploadStatus, ImageUsage
 from .services import cloudflare_service
 
+# Django 6.1 added an ``action_location`` argument to
+# ``ModelAdmin.get_actions()`` along with the ``ActionLocation`` enum. Its
+# compatibility shim introspects overrides and warns
+# (``RemovedInDjango70Warning``) when the parameter is missing; in 7.0 the shim
+# is gone and ``get_actions()`` is called with the argument unconditionally, so
+# an override without it raises ``TypeError``. This package still supports
+# Django 4.2-6.0, where neither the enum nor the argument exists, so the enum is
+# looked up dynamically (a plain import would be a hard failure there, and
+# django-stubs pinned to an older Django would reject it) and the default falls
+# back to ``None``, which tells overrides not to forward the argument.
+ActionLocation = getattr(admin, "ActionLocation", None)
+DEFAULT_ACTION_LOCATION = (
+    ActionLocation.CHANGE_LIST if ActionLocation is not None else None
+)
+
 # Canonical status -> colour map. Single source for the admin status badge and
 # the gallery template filter (see templatetags.cloudflare_images).
 STATUS_COLORS = {
@@ -732,10 +747,24 @@ class ImageUsageAdmin(admin.ModelAdmin):
         # call ``unregister_usage``) instead.
         return False
 
-    def get_actions(self, request):
+    def get_actions(self, request, action_location=DEFAULT_ACTION_LOCATION):
         # Strip the bulk ``delete_selected`` action that Django re-adds even
         # when ``has_delete_permission`` is False.
-        actions = super().get_actions(request)
+        #
+        # ``action_location`` exists only on Django >= 6.1 (see
+        # ``DEFAULT_ACTION_LOCATION``); keeping the parameter here is what stops
+        # Django 6.1's shim from emitting ``RemovedInDjango70Warning``, and what
+        # keeps this override callable once 7.0 passes the argument for real.
+        #
+        # The argument is forwarded through ``**kwargs`` so the call type-checks
+        # against django-stubs for either signature — a literal keyword would be
+        # an "unexpected keyword argument" under stubs for Django < 6.1, and a
+        # ``type: ignore`` for it would in turn be flagged as unused under
+        # newer stubs (``warn_unused_ignores``).
+        forwarded = (
+            {} if action_location is None else {"action_location": action_location}
+        )
+        actions = super().get_actions(request, **forwarded)
         actions.pop("delete_selected", None)
         return actions
 

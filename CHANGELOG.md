@@ -9,6 +9,47 @@ Release notes are also published on
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ImageUsageAdmin.get_actions()` used the signature Django 7.0 removes.**
+  Django 6.1 added an `action_location` argument to
+  `ModelAdmin.get_actions()` (defaulting to `ActionLocation.CHANGE_LIST`). The
+  override in `ImageUsageAdmin` — which exists to strip the bulk
+  `delete_selected` action from the usage registry — still took
+  `(self, request)`, so Django 6.1's compatibility shim
+  (`ModelAdmin._get_actions_with_action_location`) detected the outdated
+  signature by introspection and emitted a `RemovedInDjango70Warning` on every
+  changelist render. That shim is deleted in Django 7.0, where `get_actions()`
+  is called with the argument unconditionally, so the override would have
+  started raising `TypeError` and broken the `ImageUsage` admin outright. The
+  override now declares `action_location` and forwards it to `super()`. The
+  default comes from a new `DEFAULT_ACTION_LOCATION` module constant that
+  resolves to `ActionLocation.CHANGE_LIST` on Django 6.1+ and `None` on
+  Django 4.2-6.0 (where neither the enum nor the argument exists), so the
+  parameter Django introspects for is always present without breaking the
+  older series the package supports. A side effect of the correct signature:
+  on Django 6.1+ the shim no longer suppresses actions on the change form
+  (it returned `{}` there for outdated overrides), and `delete_selected` is
+  stripped in that location too.
+
+### Changed
+
+- **CI and classifiers now cover Django 6.1.** Nothing in the matrix exercised
+  the series that emits `RemovedInDjango70Warning`, so the `get_actions()`
+  deprecation above shipped unnoticed. Added `Framework :: Django :: 6.1` and
+  a `6.1` matrix leg (paired only with Python ≥ 3.12, which 6.1 requires).
+
+### Added
+
+- **`tests/test_admin_action_location.py`.** Asserts the override declares
+  `action_location`, that `DEFAULT_ACTION_LOCATION` tracks the running Django
+  version, that `delete_selected` is stripped for every `ActionLocation`
+  member, and — on Django 6.1+ — that calling through Django's own
+  `_get_actions_with_action_location()` entry point raises no deprecation
+  warning. Verified: the full suite (231 tests) passes on Django 6.1 with
+  `-W error::DeprecationWarning` and on Django 5.2, the new tests pass on
+  Django 4.2, and every new test fails against the old signature.
+
 ## [1.1.3] - 2026-07-08
 
 ### Fixed
