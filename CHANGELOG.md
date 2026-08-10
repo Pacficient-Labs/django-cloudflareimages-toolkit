@@ -62,6 +62,16 @@ Release notes are also published on
   the DRF release that supports it; and every new test fails against the old
   signature.
 
+- **Documented the Django/DRF pairing requirement** in `docs/installation.rst`
+  and `docs/index.rst`. The same DRF split that CI now handles per leg applies
+  to installs: DRF declares `django>=4.2` with no upper bound, so nothing in
+  either project's metadata stops pip from pairing Django 6.1 with a DRF 3.17
+  that cannot import under it — and upgrading Django in an existing
+  environment leaves an already-installed DRF alone. The dependency floor is
+  deliberately unchanged: raising it to `djangorestframework>=3.18.0` would
+  transitively require Django 5.2+ and drop support for Django 4.2 LTS and
+  5.1, which this package still advertises and tests.
+
 ## [1.1.3] - 2026-07-08
 
 ### Fixed
