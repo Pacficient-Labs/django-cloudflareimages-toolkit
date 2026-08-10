@@ -68,6 +68,8 @@ Requirements
 
 * Django 4.2+
 * Python 3.10+
+* Django REST Framework — pair Django 6.1+ with DRF 3.18+, and Django 4.2/5.1
+  with DRF 3.17.x; see :doc:`installation` for why
 * Cloudflare Images account and API token
 
 Features

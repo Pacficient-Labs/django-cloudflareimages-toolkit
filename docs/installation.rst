@@ -6,7 +6,26 @@ Requirements
 
 * Django 4.2+
 * Python 3.10+
+* Django REST Framework (see the pairing note below)
 * Cloudflare Images account and API token
+
+.. note::
+
+   **Pair Django and Django REST Framework deliberately.** No single DRF
+   release covers this package's whole supported Django range, and DRF does not
+   cap the Django versions it declares compatibility with, so pip will not stop
+   you from installing a broken pair:
+
+   * Django 6.1+ needs **DRF 3.18+**. DRF 3.17 and earlier import
+     ``django.utils.cache.cc_delim_re``, which Django 6.1 removed, so
+     ``import rest_framework.views`` raises ``ImportError`` and this package's
+     URLs fail to load.
+   * Django 4.2 and 5.1 need **DRF 3.17.x**, because DRF 3.18 requires
+     Django 5.2+.
+   * Django 5.2 and 6.0 work with either.
+
+   Upgrading Django in an existing environment does not upgrade an
+   already-installed DRF, so bump both together.
 
 Installing the Package
 ----------------------
