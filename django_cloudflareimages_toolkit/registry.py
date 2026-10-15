@@ -6,8 +6,9 @@ module adds the missing half: *which content references which image*. It has two
 layers:
 
 * a **field registry** (:func:`get_models_with_image_fields`) that auto-discovers
-  every :class:`~django_cloudflareimages_toolkit.fields.CloudflareImageField`
-  declared on installed models, and
+  every :class:`~django_cloudflareimages_toolkit.fields.CloudflareImageField` and
+  every ``ForeignKey``/``OneToOneField`` to ``CloudflareImage`` declared on
+  installed models, and
 * idempotent **sync helpers** that keep the materialised
   :class:`~django_cloudflareimages_toolkit.models.ImageUsage` index in step with
   those fields, plus a small public API (:func:`register_usage` /
@@ -37,24 +38,42 @@ MANUAL_FIELD_NAME = "manual"
 _field_cache: dict | None = None
 
 
-def get_models_with_image_fields(refresh: bool = False) -> dict:
-    """Return ``{model_class: [field_name, ...]}`` for every CloudflareImageField.
+def _is_image_reference(field, image_model) -> bool:
+    """True for a CloudflareImageField or a forward FK/OneToOne to CloudflareImage."""
+    from .fields import CloudflareImageField
 
-    This is the single source of truth for where images can live, derived from the
-    model definitions themselves so it never drifts from the code. Results are
-    cached; pass ``refresh=True`` to rebuild (useful in tests that declare models
-    after the app registry is first inspected).
+    if isinstance(field, CloudflareImageField):
+        return True
+    return bool(
+        field.concrete
+        and (field.many_to_one or field.one_to_one)
+        and field.related_model is image_model
+    )
+
+
+def get_models_with_image_fields(refresh: bool = False) -> dict:
+    """Return ``{model_class: [field_name, ...]}`` for every image reference field.
+
+    Covers ``CloudflareImageField``s and plain ``ForeignKey``/``OneToOneField``s
+    to ``CloudflareImage`` (the toolkit's own models are skipped: their FKs are
+    bookkeeping, not content). This is the single source of truth for where images
+    can live, derived from the model definitions themselves so it never drifts
+    from the code. Results are cached; pass ``refresh=True`` to rebuild (useful in
+    tests that declare models after the app registry is first inspected).
     """
     global _field_cache
     if _field_cache is None or refresh:
-        from .fields import CloudflareImageField
+        from .models import CloudflareImage
 
+        own_app = CloudflareImage._meta.app_label
         cache: dict = {}
         for model in sorted(django_apps.get_models(), key=lambda m: m._meta.label):
+            if model._meta.app_label == own_app:
+                continue
             names = sorted(
                 f.name
                 for f in model._meta.get_fields()
-                if isinstance(f, CloudflareImageField)
+                if _is_image_reference(f, CloudflareImage)
             )
             if names:
                 cache[model] = names
@@ -63,12 +82,16 @@ def get_models_with_image_fields(refresh: bool = False) -> dict:
 
 
 def get_tracked_field_names(model) -> list:
-    """Return the CloudflareImageField names on ``model`` (empty if none)."""
+    """Return the image reference field names on ``model`` (empty if none)."""
     return get_models_with_image_fields().get(model, [])
 
 
 def _extract_cloudflare_id(value) -> str | None:
-    """Pull a cloudflare_id out of a field value (handles the wrapper or a str)."""
+    """Pull a cloudflare_id out of a field value.
+
+    Handles the CloudflareImageField wrapper, a bare str, and a related
+    ``CloudflareImage`` instance (FK/OneToOne).
+    """
     if value is None:
         return None
     cloudflare_id = getattr(value, "cloudflare_id", None)
@@ -242,7 +265,7 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
         cloudflare_id: The Cloudflare image ID being referenced.
         field_name: A label distinguishing this reference from others on the same
             object (defaults to ``"manual"``). It must NOT match the name of a
-            ``CloudflareImageField`` declared on ``obj``'s model: usage rows are
+            tracked image field declared on ``obj``'s model: usage rows are
             unique on ``(content_type, object_id, field_name)``, so a colliding
             label would share a row with the auto-tracked field and the two
             references would overwrite each other.
@@ -260,7 +283,7 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
     if field_name in tracked:
         raise ValueError(
             f"field_name {field_name!r} collides with the tracked "
-            f"CloudflareImageField of the same name on {model._meta.label}. "
+            f"image field of the same name on {model._meta.label}. "
             f"Pick a distinct label for the manual reference."
         )
     using = obj._state.db
@@ -274,7 +297,7 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
         using=using,
     )
     # Ensure the owner's deletion clears its usage rows even when the model has
-    # no CloudflareImageField (and so was never wired in apps.ready()).
+    # no tracked image field (and so was never wired in apps.ready()).
     ensure_delete_cleanup(model)
     return usage
 

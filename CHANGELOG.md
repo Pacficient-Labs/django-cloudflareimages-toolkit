@@ -11,6 +11,31 @@ Release notes are also published on
 
 ### Fixed
 
+- **The admin never showed a preview.** `CloudflareImage.thumbnail_url` only
+  looked for a named variant called `thumbnail`. A new Cloudflare Images account
+  ships with just `public`, so the property returned `None` for every image and
+  the gallery printed "No preview" on every card. It now falls back to
+  `public_url` when the account has no `thumbnail` variant. A new
+  `THUMBNAIL_VARIANT` setting picks a different named variant, or takes
+  flexible-variant options like `"w=300,h=300,fit=cover"` to build a real
+  thumbnail from the public URL (#41).
+- **Images referenced by a plain `ForeignKey` or `OneToOneField` showed as
+  "Orphaned".** The usage registry only discovered `CloudflareImageField`s, so
+  a project that pointed at `CloudflareImage` the normal relational way never
+  got an `ImageUsage` row. Every such image read "0 (orphaned)" in the admin and
+  the "Orphaned" filter returned the whole table, which invites deleting images
+  that are in use. Discovery now also picks up forward FK and OneToOne fields to
+  `CloudflareImage` on installed models (the toolkit's own `ImageUsage` and
+  `ImageUploadLog` are skipped). Those fields get the same save/delete signals,
+  and `reconcile_image_usage` backfills them, so existing rows are fixed by one
+  reconcile run. Deleting an image now also drops usage rows held by FKs, since
+  `SET_NULL` rewrites the host column without firing `post_save` and the stale
+  row would otherwise relink to any later image uploaded under the same id (#41).
+- **A bare-string `variants` value failed silently.** If a row held one URL as a
+  JSON string instead of a list, `get_variant_url` matched neither branch and
+  `public_url` came back `None` with no error. Reads now treat a string as a
+  one-item list, `CloudflareImage.save()` stores the list form, and migration
+  `0008_wrap_string_variants` rewrites rows that already have a string (#41).
 - **`ImageUsageAdmin.get_actions()` used the signature Django 7.0 removes.**
   Django 6.1 added an `action_location` argument to
   `ModelAdmin.get_actions()` (defaulting to `ActionLocation.CHANGE_LIST`). The

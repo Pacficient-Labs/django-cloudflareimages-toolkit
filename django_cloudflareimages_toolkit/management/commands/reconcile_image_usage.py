@@ -55,7 +55,13 @@ class Command(BaseCommand):
             # CloudflareImageFields). The base manager bypasses a filtered default
             # manager (soft-delete / tenant scoping) that would otherwise hide
             # still-referenced rows and get them pruned as stale.
-            instances = list(model._base_manager.all().order_by("pk"))
+            # FK/OneToOne references are joined in so reading them isn't N+1.
+            fk_names = [
+                n for n in registry[model] if model._meta.get_field(n).is_relation
+            ]
+            instances = list(
+                model._base_manager.select_related(*fk_names).order_by("pk")
+            )
             for field_name in registry[model]:
                 current = {}
                 for instance in instances:
@@ -129,7 +135,7 @@ class Command(BaseCommand):
     def _undiscovered_field_pks(self, registry) -> set:
         """PKs of auto rows for fields no longer in the registry.
 
-        Covers renamed/removed ``CloudflareImageField``s (their old usage rows
+        Covers renamed/removed image fields (their old usage rows
         would otherwise keep their images looking in-use forever). Rows whose
         ``source`` is ``"manual"`` are preserved regardless of ``field_name``.
         """

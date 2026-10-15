@@ -45,6 +45,7 @@ You can customize additional behavior with these optional settings:
        'METADATA_FACTORY': None,              # Dotted path / callable for metadata
        'WEBHOOK_SECRET': 'your-webhook-secret', # For webhook signature verification
        'MAX_FILE_SIZE_MB': 10,                # Maximum file size accessor (MB)
+       'THUMBNAIL_VARIANT': 'thumbnail',      # Preview variant name, or 'w=300,fit=cover'
 
        # Custom delivery URL (defaults to imagedelivery.net when unset)
        'DELIVERY_URL': None,                  # Alternate delivery domain

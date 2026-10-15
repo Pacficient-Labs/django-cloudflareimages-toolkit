@@ -15,7 +15,8 @@ class CloudflareImagesConfig(AppConfig):
     def ready(self):
         """Wire the image-usage registry when Django starts.
 
-        Discover every model that declares a ``CloudflareImageField`` and connect
+        Discover every model that declares a ``CloudflareImageField`` or a
+        ``ForeignKey``/``OneToOneField`` to ``CloudflareImage`` and connect
         usage-sync signals to those senders only (keeping the receivers off
         untracked models). ``dispatch_uid`` makes the wiring itself idempotent.
         """
@@ -42,6 +43,11 @@ class CloudflareImagesConfig(AppConfig):
             signals.link_image_to_usages,
             sender=CloudflareImage,
             dispatch_uid="cfimg_link_usages",
+        )
+        post_delete.connect(
+            signals.drop_relational_usages,
+            sender=CloudflareImage,
+            dispatch_uid="cfimg_drop_relational_usages",
         )
         # Mark the affected image's last_referenced_at whenever any usage row is
         # removed (whatever the deletion path: sync_object, clear_object,

@@ -3,7 +3,7 @@ Signal receivers that keep the ``ImageUsage`` index in sync with host models.
 
 These are connected per tracked sender in
 :meth:`~django_cloudflareimages_toolkit.apps.CloudflareImagesConfig.ready`, so
-they only fire for models that actually declare a ``CloudflareImageField``. All
+they only fire for models that actually declare an image reference field. All
 real work is delegated to the shared, idempotent helpers in :mod:`.registry`.
 """
 
@@ -61,3 +61,34 @@ def link_image_to_usages(sender, instance, using=None, **kwargs) -> None:
     )
     if linked:
         _bump_last_referenced(instance, using=using)
+
+
+def drop_relational_usages(sender, instance, using=None, **kwargs) -> None:
+    """post_delete on CloudflareImage: drop usage rows held by FK/OneToOne fields.
+
+    An FK can't keep pointing at a deleted row: ``CASCADE`` deletes the host
+    (its own post_delete clears the rows), but ``SET_NULL``/``SET_DEFAULT``/
+    ``SET()`` rewrite the host column without ``post_save``. Without this the
+    stale row would linger as an "unregistered reference" and relink to any
+    image later registered under the same ``cloudflare_id``.
+    """
+    from django.contrib.contenttypes.models import ContentType
+    from django.db.models import Q
+
+    from .models import CloudflareImage, ImageUsage
+    from .registry import get_models_with_image_fields
+
+    match = Q()
+    for model, names in get_models_with_image_fields().items():
+        fk_names = [
+            n
+            for n in names
+            if model._meta.get_field(n).related_model is CloudflareImage
+        ]
+        if fk_names:
+            ct = ContentType.objects.db_manager(_db(using)).get_for_model(model)
+            match |= Q(content_type=ct, field_name__in=fk_names)
+    if match:
+        ImageUsage.objects.using(_db(using)).filter(
+            match, cloudflare_id=instance.cloudflare_id
+        ).exclude(source=ImageUsage.SOURCE_MANUAL).delete()

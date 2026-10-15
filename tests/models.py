@@ -37,3 +37,23 @@ class Plain(models.Model):
     """Host with no image field — must never be discovered or tracked."""
 
     name = models.CharField(max_length=100, blank=True)
+
+
+class Post(models.Model):
+    """Host referencing images relationally via a nullable ForeignKey (#41)."""
+
+    title = models.CharField(max_length=100, blank=True)
+    image = models.ForeignKey(
+        "django_cloudflareimages_toolkit.CloudflareImage",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+
+class Profile(models.Model):
+    """Host referencing an image via a cascading OneToOneField (#41)."""
+
+    avatar = models.OneToOneField(
+        "django_cloudflareimages_toolkit.CloudflareImage", on_delete=models.CASCADE
+    )

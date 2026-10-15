@@ -25,6 +25,13 @@ User = get_user_model()
 CREATOR_MAX_LENGTH = 255
 
 
+def _normalize_variants(variants):
+    """Wrap a bare variant URL string in a list (the shape readers expect)."""
+    if isinstance(variants, str):
+        return [variants] if variants else []
+    return variants
+
+
 class ImageUploadStatus(models.TextChoices):
     """Status choices for image uploads."""
 
@@ -157,6 +164,12 @@ class CloudflareImage(models.Model):
     def __str__(self) -> str:
         return f"CloudflareImage({self.cloudflare_id}) - {self.status}"
 
+    def save(self, *args, **kwargs):
+        # Never store a bare URL string in ``variants``; every reader expects a
+        # list (or dict). Covers every write path, not just the CF response one.
+        self.variants = _normalize_variants(self.variants)
+        super().save(*args, **kwargs)
+
     @property
     def is_expired(self) -> bool:
         """Check if the upload URL has expired."""
@@ -176,8 +189,26 @@ class CloudflareImage(models.Model):
 
     @property
     def thumbnail_url(self) -> str | None:
-        """Get the thumbnail variant URL for the uploaded image."""
-        return self.get_variant_url("thumbnail")
+        """Get a small preview URL for the image.
+
+        Driven by ``CLOUDFLARE_IMAGES["THUMBNAIL_VARIANT"]`` (default
+        ``"thumbnail"``). A value containing ``=`` (e.g. ``"w=300,fit=cover"``)
+        is applied as a flexible-variant transform to the public URL; any other
+        value names a variant. A named variant that doesn't exist on the account
+        (a new account ships only ``public``) falls back to ``public_url``, so a
+        preview always renders.
+        """
+        from .settings import cloudflare_settings
+
+        variant = cloudflare_settings.thumbnail_variant
+        public = self.public_url
+        if "=" in variant:
+            if not public:
+                return None
+            from .url_factory import image_url_factory
+
+            return image_url_factory.with_options(public, variant)
+        return self.get_variant_url(variant) or public
 
     def get_variant_url(self, variant_name: str) -> str | None:
         """
@@ -192,27 +223,28 @@ class CloudflareImage(models.Model):
         Returns:
             The full variant URL if found, None otherwise
         """
-        if not self.variants:
+        variants = _normalize_variants(self.variants)
+        if not variants:
             return None
 
         from .url_factory import image_url_factory
 
         found: str | None = None
-        if isinstance(self.variants, list):
+        if isinstance(variants, list):
             # Variants are full URLs - find one ending with the variant name
-            for variant_url in self.variants:
+            for variant_url in variants:
                 if variant_url.rstrip("/").endswith(f"/{variant_name}"):
                     found = variant_url
                     break
             else:
                 # Fallback: check if variant name appears anywhere in URL
-                for variant_url in self.variants:
+                for variant_url in variants:
                     if variant_name in variant_url:
                         found = variant_url
                         break
-        elif isinstance(self.variants, dict):
+        elif isinstance(variants, dict):
             # Handle dict format if Cloudflare ever returns that
-            found = self.variants.get(variant_name)
+            found = variants.get(variant_name)
 
         if found is None:
             return None

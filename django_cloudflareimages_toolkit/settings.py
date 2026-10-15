@@ -102,6 +102,18 @@ class CloudflareImagesSettings:
         return bool(self._settings.get("DELIVERY_INCLUDE_ACCOUNT_HASH", True))
 
     @property
+    def thumbnail_variant(self) -> str:
+        """
+        Variant used for previews (``CloudflareImage.thumbnail_url``).
+
+        Either a named variant (default ``"thumbnail"``; falls back to the
+        public URL when the account has no such variant) or flexible-variant
+        options such as ``"w=300,h=300,fit=cover"`` (requires flexible variants
+        enabled on the Cloudflare account).
+        """
+        return str(self._settings.get("THUMBNAIL_VARIANT") or "thumbnail")
+
+    @property
     def default_expiry_minutes(self) -> int:
         """Default expiry time for upload URLs in minutes."""
         return self._settings.get("DEFAULT_EXPIRY_MINUTES", 30)
