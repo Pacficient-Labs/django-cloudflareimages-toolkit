@@ -56,12 +56,15 @@ class Command(BaseCommand):
             # manager (soft-delete / tenant scoping) that would otherwise hide
             # still-referenced rows and get them pruned as stale.
             # FK/OneToOne references are joined in so reading them isn't N+1.
+            # Never call a bare select_related(): it joins every FK, and Django
+            # 7.0 removes that form.
             fk_names = [
                 n for n in registry[model] if model._meta.get_field(n).is_relation
             ]
-            instances = list(
-                model._base_manager.select_related(*fk_names).order_by("pk")
-            )
+            queryset = model._base_manager.order_by("pk")
+            if fk_names:
+                queryset = queryset.select_related(*fk_names)
+            instances = list(queryset)
             for field_name in registry[model]:
                 current = {}
                 for instance in instances:
