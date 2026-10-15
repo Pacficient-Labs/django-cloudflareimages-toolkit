@@ -65,6 +65,7 @@ CLOUDFLARE_IMAGES = {
     'METADATA_FACTORY': None,  # Optional: dotted path to an ImageMetadataFactory (see below)
     'WEBHOOK_SECRET': 'your-webhook-secret',  # Optional
     'MAX_FILE_SIZE_MB': 10,  # Optional
+    'THUMBNAIL_VARIANT': 'thumbnail',  # Optional: variant name, or options like 'w=300,fit=cover'
 
     # Optional: serve images from an alternate domain instead of imagedelivery.net
     'DELIVERY_URL': None,  # e.g. 'images.example.com' (None = use imagedelivery.net)
@@ -567,6 +568,7 @@ for image in images:
 | `REQUIRE_SIGNED_URLS` | `True` | Require signed URLs by default |
 | `WEBHOOK_SECRET` | `None` | Secret for webhook signature validation |
 | `MAX_FILE_SIZE_MB` | `10` | Size accessor exposed as `cloudflare_settings.max_file_size_mb`; **not** auto-enforced by the toolkit (Cloudflare applies its own limits) |
+| `THUMBNAIL_VARIANT` | `thumbnail` | What `thumbnail_url` (and the admin preview) uses. A variant name falls back to the public URL when the account doesn't have it. A value with `=` (e.g. `w=300,h=300,fit=cover`) is applied as a flexible variant, which needs flexible variants enabled on the account |
 | `DELIVERY_URL` | `None` | Alternate delivery domain instead of `imagedelivery.net` (bare host or full URL) |
 | `DELIVERY_PATH_PREFIX` | `cdn-cgi/imagedelivery` | Path prefix after a custom `DELIVERY_URL` (use `''` for a Worker proxy) |
 | `DELIVERY_INCLUDE_ACCOUNT_HASH` | `True` | Whether the account hash appears in custom delivery URLs (`False` for a Worker proxy) |
@@ -639,9 +641,10 @@ already exists.
 the other half — *"what content is using each image"* — so admins and site staff
 have a single source of truth for both.
 
-**Automatic tracking.** Every model field declared as a `CloudflareImageField` is
-auto-discovered. Saving, updating, or deleting such a model keeps an `ImageUsage`
-row in sync via signals — no extra code required.
+**Automatic tracking.** Every `CloudflareImageField`, and every `ForeignKey` or
+`OneToOneField` to `CloudflareImage`, is auto-discovered. Saving, updating, or
+deleting such a model keeps an `ImageUsage` row in sync via signals, with no
+extra code.
 
 ```python
 from django_cloudflareimages_toolkit.fields import CloudflareImageField
@@ -651,7 +654,13 @@ class Product(models.Model):
 
 product = Product.objects.create(image="cloudflare-image-id")
 # -> an ImageUsage row now links that image to this product
+
+class Post(models.Model):
+    image = models.ForeignKey(CloudflareImage, on_delete=models.SET_NULL, null=True)
+# -> tracked the same way
 ```
+
+Many-to-many fields aren't discovered. Use the manual API below for those.
 
 **Manual API.** For references the toolkit can't see (an ID kept in a JSON blob,
 derived at runtime, etc.):

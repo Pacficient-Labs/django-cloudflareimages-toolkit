@@ -15,6 +15,7 @@ import uuid
 from django.db import models
 
 from django_cloudflareimages_toolkit.fields import CloudflareImageField
+from django_cloudflareimages_toolkit.models import CloudflareImage
 
 
 class Product(models.Model):
@@ -37,3 +38,49 @@ class Plain(models.Model):
     """Host with no image field — must never be discovered or tracked."""
 
     name = models.CharField(max_length=100, blank=True)
+
+
+class Post(models.Model):
+    """Host referencing images relationally via a nullable ForeignKey (#41)."""
+
+    title = models.CharField(max_length=100, blank=True)
+    image = models.ForeignKey(
+        "django_cloudflareimages_toolkit.CloudflareImage",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+
+class Profile(models.Model):
+    """Host referencing an image via a cascading OneToOneField (#41)."""
+
+    avatar = models.OneToOneField(
+        "django_cloudflareimages_toolkit.CloudflareImage", on_delete=models.CASCADE
+    )
+
+
+def _fallback_image():
+    # Django 4.2 calls SET()'s callable on every image delete, even with no
+    # Banner rows, so a missing fallback must not raise.
+    return CloudflareImage.objects.filter(cloudflare_id="cf-fallback").first()
+
+
+class Banner(models.Model):
+    """Host whose FK is re-pointed by ``on_delete=SET(...)`` (#41 review)."""
+
+    image = models.ForeignKey(
+        CloudflareImage, on_delete=models.SET(_fallback_image), null=True
+    )
+
+
+class Content(models.Model):
+    """Concrete MTI parent holding an image FK (#41 review)."""
+
+    image = models.ForeignKey(CloudflareImage, on_delete=models.SET_NULL, null=True)
+
+
+class Story(Content):
+    """MTI child: inherits ``image``, which lives in Content's table."""
+
+    headline = models.CharField(max_length=100, blank=True)

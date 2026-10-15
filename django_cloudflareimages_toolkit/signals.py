@@ -3,7 +3,7 @@ Signal receivers that keep the ``ImageUsage`` index in sync with host models.
 
 These are connected per tracked sender in
 :meth:`~django_cloudflareimages_toolkit.apps.CloudflareImagesConfig.ready`, so
-they only fire for models that actually declare a ``CloudflareImageField``. All
+they only fire for models that actually declare an image reference field. All
 real work is delegated to the shared, idempotent helpers in :mod:`.registry`.
 """
 
@@ -12,13 +12,15 @@ from __future__ import annotations
 from .registry import _db, clear_object, sync_object
 
 
-def sync_instance_usage(sender, instance, using=None, **kwargs) -> None:
+def sync_instance_usage(
+    sender, instance, using=None, update_fields=None, **kwargs
+) -> None:
     """post_save: upsert/clear usage rows for a saved host instance.
 
     Django passes the database alias as ``using``; we forward it so multi-DB
     deployments record the usage on the same database as the host instance.
     """
-    sync_object(instance, using=using)
+    sync_object(instance, using=using, update_fields=update_fields)
 
 
 def remove_instance_usage(sender, instance, using=None, **kwargs) -> None:
@@ -61,3 +63,78 @@ def link_image_to_usages(sender, instance, using=None, **kwargs) -> None:
     )
     if linked:
         _bump_last_referenced(instance, using=using)
+
+
+def resync_relational_usages(sender, instance, using=None, **kwargs) -> None:
+    """post_delete on CloudflareImage: re-sync hosts whose FK pointed at it.
+
+    ``CASCADE`` deletes the host (its own post_delete clears the rows), but
+    ``SET_NULL``/``SET_DEFAULT``/``SET()``/``DO_NOTHING`` leave the host in
+    place with a column rewritten without ``post_save``. Re-syncing each host
+    from the database drops the row for the deleted image (which would
+    otherwise relink to any later image under the same ``cloudflare_id``) and
+    records the replacement image a ``SET``/``SET_DEFAULT`` handler assigned.
+    """
+    from django.db.models import Q
+
+    from .models import ImageUsage
+    from .registry import _content_type_for, get_models_with_image_fields
+
+    cloudflare_id = getattr(instance, "_cfimg_deleted_cloudflare_id", None)
+    if not cloudflare_id:
+        return
+    db = _db(using)
+    match = Q()
+    for model, names in get_models_with_image_fields().items():
+        fk_names = [n for n in names if model._meta.get_field(n).is_relation]
+        if fk_names:
+            ct = _content_type_for(model, using=db)
+            match |= Q(content_type=ct, field_name__in=fk_names)
+    if not match:
+        return
+    rows = list(
+        ImageUsage.objects.using(db)
+        .filter(match, cloudflare_id=cloudflare_id)
+        .exclude(source=ImageUsage.SOURCE_MANUAL)
+        .select_related("content_type")
+    )
+    for usage in rows:
+        model = usage.content_type.model_class()
+        host = (
+            model._base_manager.using(db).filter(pk=usage.object_id).first()
+            if model
+            else None
+        )
+        if host is None:
+            usage.delete()
+        else:
+            sync_object(host, using=db)
+
+
+def remember_cloudflare_id(sender, instance, **kwargs) -> None:
+    """pre_delete on CloudflareImage: read ``cloudflare_id`` while the row exists.
+
+    ``resync_relational_usages`` runs in post_delete, when a deferred field
+    (``.only("pk")``) can no longer be loaded.
+    """
+    instance._cfimg_deleted_cloudflare_id = instance.cloudflare_id
+
+
+def connect_image_receivers(model) -> None:
+    """Connect the CloudflareImage receivers for ``model`` (concrete or proxy)."""
+    from django.db.models.signals import post_delete, post_save, pre_delete
+
+    label = model._meta.label
+    post_save.connect(
+        link_image_to_usages, sender=model, dispatch_uid=f"cfimg_link_usages_{label}"
+    )
+    pre_delete.connect(
+        remember_cloudflare_id,
+        sender=model,
+        dispatch_uid=f"cfimg_remember_id_{label}",
+    )
+    post_delete.connect(
+        resync_relational_usages,
+        sender=model,
+        dispatch_uid=f"cfimg_resync_usages_{label}",
+    )

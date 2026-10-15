@@ -6,8 +6,9 @@ module adds the missing half: *which content references which image*. It has two
 layers:
 
 * a **field registry** (:func:`get_models_with_image_fields`) that auto-discovers
-  every :class:`~django_cloudflareimages_toolkit.fields.CloudflareImageField`
-  declared on installed models, and
+  every :class:`~django_cloudflareimages_toolkit.fields.CloudflareImageField` and
+  every ``ForeignKey``/``OneToOneField`` to ``CloudflareImage`` declared on
+  installed models, and
 * idempotent **sync helpers** that keep the materialised
   :class:`~django_cloudflareimages_toolkit.models.ImageUsage` index in step with
   those fields, plus a small public API (:func:`register_usage` /
@@ -37,24 +38,52 @@ MANUAL_FIELD_NAME = "manual"
 _field_cache: dict | None = None
 
 
-def get_models_with_image_fields(refresh: bool = False) -> dict:
-    """Return ``{model_class: [field_name, ...]}`` for every CloudflareImageField.
+def _is_image_reference(field, image_model) -> bool:
+    """True for a CloudflareImageField or a forward FK/OneToOne to CloudflareImage."""
+    from .fields import CloudflareImageField
 
-    This is the single source of truth for where images can live, derived from the
-    model definitions themselves so it never drifts from the code. Results are
-    cached; pass ``refresh=True`` to rebuild (useful in tests that declare models
-    after the app registry is first inspected).
+    if isinstance(field, CloudflareImageField):
+        return True
+    # Compare concrete models so an FK to a proxy of CloudflareImage counts
+    # (same table), while a multi-table subclass (its own table) doesn't. A
+    # subclass's own ``<model>_ptr`` parent link is inheritance, not content.
+    return bool(
+        field.concrete
+        and (field.many_to_one or field.one_to_one)
+        and field.related_model._meta.concrete_model is image_model
+        and not field.remote_field.parent_link
+    )
+
+
+def get_models_with_image_fields(refresh: bool = False) -> dict:
+    """Return ``{model_class: [field_name, ...]}`` for every image reference field.
+
+    Covers ``CloudflareImageField``s and plain ``ForeignKey``/``OneToOneField``s
+    to ``CloudflareImage`` (the toolkit's own models are skipped: their FKs are
+    bookkeeping, not content). This is the single source of truth for where images
+    can live, derived from the model definitions themselves so it never drifts
+    from the code. Results are cached; pass ``refresh=True`` to rebuild (useful in
+    tests that declare models after the app registry is first inspected).
     """
     global _field_cache
     if _field_cache is None or refresh:
-        from .fields import CloudflareImageField
+        from .models import CloudflareImage
 
+        own_app = CloudflareImage._meta.app_label
         cache: dict = {}
         for model in sorted(django_apps.get_models(), key=lambda m: m._meta.label):
+            # Proxies share their concrete model's table and rows; saves through
+            # them are synced via the concrete model (see _tracked_owners).
+            if model._meta.app_label == own_app or model._meta.proxy:
+                continue
+            # Only fields stored in this model's own table. A field inherited
+            # through multi-table inheritance belongs to the parent that
+            # declares it (abstract-base fields are copied, so they count).
             names = sorted(
                 f.name
                 for f in model._meta.get_fields()
-                if isinstance(f, CloudflareImageField)
+                if _is_image_reference(f, CloudflareImage)
+                and f.model._meta.concrete_model is model
             )
             if names:
                 cache[model] = names
@@ -63,12 +92,38 @@ def get_models_with_image_fields(refresh: bool = False) -> dict:
 
 
 def get_tracked_field_names(model) -> list:
-    """Return the CloudflareImageField names on ``model`` (empty if none)."""
-    return get_models_with_image_fields().get(model, [])
+    """Return the image reference field names on ``model`` (empty if none)."""
+    return get_models_with_image_fields().get(model._meta.concrete_model, [])
+
+
+def _tracked_owners(model) -> list:
+    """``[(owner, field_names), ...]`` whose rows a save of ``model`` must sync.
+
+    That is the concrete model plus each multi-table parent with tracked
+    fields. Django sends ``post_save`` only for the saved class, so a child's
+    save has to sync the fields stored in its parents' tables too.
+    """
+    registry = get_models_with_image_fields()
+    concrete = model._meta.concrete_model
+    chain = [concrete, *concrete._meta.get_parent_list()]
+    return [(m, registry[m]) for m in chain if m in registry]
+
+
+def get_synced_models() -> list:
+    """Every model whose save or delete must touch the usage index."""
+    return [
+        m
+        for m in sorted(django_apps.get_models(), key=lambda m: m._meta.label)
+        if _tracked_owners(m)
+    ]
 
 
 def _extract_cloudflare_id(value) -> str | None:
-    """Pull a cloudflare_id out of a field value (handles the wrapper or a str)."""
+    """Pull a cloudflare_id out of a field value.
+
+    Handles the CloudflareImageField wrapper, a bare str, and a related
+    ``CloudflareImage`` instance (FK/OneToOne).
+    """
     if value is None:
         return None
     cloudflare_id = getattr(value, "cloudflare_id", None)
@@ -77,6 +132,21 @@ def _extract_cloudflare_id(value) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+def _read_cloudflare_id(instance, field_name) -> str | None:
+    """Read the cloudflare_id a tracked field on ``instance`` points at.
+
+    An FK whose target row doesn't exist (a fixture forward reference while
+    constraints are off, or ``on_delete=DO_NOTHING``) raises ``DoesNotExist``
+    from the descriptor; treat it as no reference so the save isn't aborted.
+    """
+    from django.core.exceptions import ObjectDoesNotExist
+
+    try:
+        return _extract_cloudflare_id(getattr(instance, field_name, None))
+    except ObjectDoesNotExist:
+        return None
 
 
 def _db(using):
@@ -200,14 +270,47 @@ def clear_usage(content_type, object_id, field_name: str, using=None) -> None:
     ).delete()
 
 
-def sync_object(instance, using=None) -> None:
-    """Synchronise usage rows for every tracked field on a single instance."""
-    field_names = get_tracked_field_names(type(instance))
+def sync_object(instance, using=None, update_fields=None) -> None:
+    """Synchronise usage rows for every tracked field on a single instance.
+
+    With ``update_fields`` (from ``save(update_fields=...)``), only tracked
+    fields that were actually written are synced; the others may hold unsaved
+    in-memory values that don't match the database.
+    """
+    for owner, field_names in _tracked_owners(type(instance)):
+        _sync_owner(instance, owner, field_names, using, update_fields)
+
+
+def _sync_owner(instance, owner, field_names, using, update_fields) -> None:
+    """Sync ``owner``'s tracked fields on ``instance``, keyed to ``owner``."""
+    from .models import ImageUsage
+
+    if update_fields is not None:
+        opts = owner._meta
+        field_names = [
+            n
+            for n in field_names
+            if n in update_fields or opts.get_field(n).attname in update_fields
+        ]
     if not field_names:
         return
-    content_type = _content_type_for(type(instance), using=using)
+    content_type = _content_type_for(owner, using=using)
+    # Manual rows win over auto sync, as in reconcile: a register_usage() row
+    # labelled with a field's name (allowed before FKs were tracked) stays put.
+    manual = set(
+        ImageUsage.objects.using(_db(using))
+        .filter(
+            content_type=content_type,
+            object_id=str(instance.pk),
+            field_name__in=field_names,
+            source=ImageUsage.SOURCE_MANUAL,
+        )
+        .values_list("field_name", flat=True)
+    )
     for field_name in field_names:
-        cloudflare_id = _extract_cloudflare_id(getattr(instance, field_name, None))
+        if field_name in manual:
+            continue
+        cloudflare_id = _read_cloudflare_id(instance, field_name)
         if cloudflare_id:
             record_usage(
                 content_type, instance.pk, field_name, cloudflare_id, using=using
@@ -242,7 +345,7 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
         cloudflare_id: The Cloudflare image ID being referenced.
         field_name: A label distinguishing this reference from others on the same
             object (defaults to ``"manual"``). It must NOT match the name of a
-            ``CloudflareImageField`` declared on ``obj``'s model: usage rows are
+            tracked image field declared on ``obj``'s model: usage rows are
             unique on ``(content_type, object_id, field_name)``, so a colliding
             label would share a row with the auto-tracked field and the two
             references would overwrite each other.
@@ -256,11 +359,12 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
     from .models import ImageUsage
 
     model = type(obj)
-    tracked = get_tracked_field_names(model)
+    # Include fields stored on multi-table parents: a child's save syncs them.
+    tracked = {n for _, names in _tracked_owners(model) for n in names}
     if field_name in tracked:
         raise ValueError(
             f"field_name {field_name!r} collides with the tracked "
-            f"CloudflareImageField of the same name on {model._meta.label}. "
+            f"image field of the same name on {model._meta.label}. "
             f"Pick a distinct label for the manual reference."
         )
     using = obj._state.db
@@ -274,7 +378,7 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
         using=using,
     )
     # Ensure the owner's deletion clears its usage rows even when the model has
-    # no CloudflareImageField (and so was never wired in apps.ready()).
+    # no tracked image field (and so was never wired in apps.ready()).
     ensure_delete_cleanup(model)
     return usage
 

@@ -17,7 +17,7 @@ from django.db import transaction
 from ...models import CloudflareImage, ImageUsage
 from ...registry import (
     MANUAL_FIELD_NAME,
-    _extract_cloudflare_id,
+    _read_cloudflare_id,
     get_models_with_image_fields,
     record_usage,
 )
@@ -55,13 +55,20 @@ class Command(BaseCommand):
             # CloudflareImageFields). The base manager bypasses a filtered default
             # manager (soft-delete / tenant scoping) that would otherwise hide
             # still-referenced rows and get them pruned as stale.
-            instances = list(model._base_manager.all().order_by("pk"))
+            # FK/OneToOne references are joined in so reading them isn't N+1.
+            # Never call a bare select_related(): it joins every FK, and Django
+            # 7.0 removes that form.
+            fk_names = [
+                n for n in registry[model] if model._meta.get_field(n).is_relation
+            ]
+            queryset = model._base_manager.order_by("pk")
+            if fk_names:
+                queryset = queryset.select_related(*fk_names)
+            instances = list(queryset)
             for field_name in registry[model]:
                 current = {}
                 for instance in instances:
-                    cloudflare_id = _extract_cloudflare_id(
-                        getattr(instance, field_name, None)
-                    )
+                    cloudflare_id = _read_cloudflare_id(instance, field_name)
                     if cloudflare_id:
                         current[str(instance.pk)] = cloudflare_id
 
@@ -129,7 +136,7 @@ class Command(BaseCommand):
     def _undiscovered_field_pks(self, registry) -> set:
         """PKs of auto rows for fields no longer in the registry.
 
-        Covers renamed/removed ``CloudflareImageField``s (their old usage rows
+        Covers renamed/removed image fields (their old usage rows
         would otherwise keep their images looking in-use forever). Rows whose
         ``source`` is ``"manual"`` are preserved regardless of ``field_name``.
         """
