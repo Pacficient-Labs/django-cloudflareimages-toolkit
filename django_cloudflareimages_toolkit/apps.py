@@ -24,9 +24,9 @@ class CloudflareImagesConfig(AppConfig):
 
         from . import signals
         from .models import CloudflareImage, ImageUsage
-        from .registry import get_models_with_image_fields
+        from .registry import get_synced_models
 
-        for model in get_models_with_image_fields():
+        for model in get_synced_models():
             label = model._meta.label
             post_save.connect(
                 signals.sync_instance_usage,
@@ -44,9 +44,10 @@ class CloudflareImagesConfig(AppConfig):
             sender=CloudflareImage,
             dispatch_uid="cfimg_link_usages",
         )
+        # No sender filter: deleting through a CloudflareImage proxy sends
+        # post_delete with the proxy as sender. The receiver checks the model.
         post_delete.connect(
             signals.resync_relational_usages,
-            sender=CloudflareImage,
             dispatch_uid="cfimg_resync_relational_usages",
         )
         # Mark the affected image's last_referenced_at whenever any usage row is

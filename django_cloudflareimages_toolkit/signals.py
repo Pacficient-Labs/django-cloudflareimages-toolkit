@@ -77,9 +77,11 @@ def resync_relational_usages(sender, instance, using=None, **kwargs) -> None:
     """
     from django.db.models import Q
 
-    from .models import ImageUsage
+    from .models import CloudflareImage, ImageUsage
     from .registry import _content_type_for, get_models_with_image_fields
 
+    if sender._meta.concrete_model is not CloudflareImage:
+        return
     db = _db(using)
     match = Q()
     for model, names in get_models_with_image_fields().items():

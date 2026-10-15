@@ -72,3 +72,15 @@ class Banner(models.Model):
     image = models.ForeignKey(
         CloudflareImage, on_delete=models.SET(_fallback_image), null=True
     )
+
+
+class Content(models.Model):
+    """Concrete MTI parent holding an image FK (#41 review)."""
+
+    image = models.ForeignKey(CloudflareImage, on_delete=models.SET_NULL, null=True)
+
+
+class Story(Content):
+    """MTI child: inherits ``image``, which lives in Content's table."""
+
+    headline = models.CharField(max_length=100, blank=True)

@@ -21,6 +21,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.core.management import call_command
 from django.db import connection, models
+from django.db.models.signals import post_delete
 from django.test import Client
 from django.test.utils import isolate_apps
 from django.urls import reverse
@@ -39,7 +40,7 @@ from django_cloudflareimages_toolkit.registry import (
     register_usage,
 )
 
-from .models import Banner, Post, Product, Profile
+from .models import Banner, Content, Post, Product, Profile, Story
 
 DELIVERY = "https://imagedelivery.net/test-account-hash"
 CHANGELIST = "admin:django_cloudflareimages_toolkit_cloudflareimage_changelist"
@@ -147,6 +148,15 @@ class TestRelationalDiscovery:
         field = Gallery._meta.get_field("cover")
         assert _is_image_reference(field, CloudflareImage)
 
+    @isolate_apps("tests")
+    def test_mti_parent_link_is_not_a_reference(self):
+        class SubImage(CloudflareImage):
+            class Meta:
+                app_label = "tests"
+
+        field = SubImage._meta.get_field("cloudflareimage_ptr")
+        assert not _is_image_reference(field, CloudflareImage)
+
     def test_skips_toolkit_bookkeeping_models(self):
         registry = get_models_with_image_fields(refresh=True)
         assert ImageUsage not in registry
@@ -217,6 +227,21 @@ class TestRelationalSync:
 
         post.save(update_fields=["image_id"])
         assert usages_for(post).get().cloudflare_id == "cf-2"
+
+    @isolate_apps("tests")
+    def test_delete_through_proxy_resyncs_hosts(self):
+        class ImageProxy(CloudflareImage):
+            class Meta:
+                proxy = True
+                app_label = "tests"
+
+        image = make_image("cf-1")
+        post = Post.objects.create(image=image)
+        # What the collector leaves behind for SET_NULL: column rewritten, no
+        # post_save. Then post_delete fires with the proxy as sender.
+        Post.objects.filter(pk=post.pk).update(image=None)
+        post_delete.send(sender=ImageProxy, instance=image, using="default")
+        assert not usages_for(post).exists()
 
     def test_set_callable_delete_repoints_usage(self):
         fallback = make_image("cf-fallback")
@@ -310,6 +335,40 @@ class TestAdminUsage:
         resp = admin_client.get(reverse(CHANGELIST), {"orphaned": "1", "view": "table"})
         assert b"cf-orphan" in resp.content
         assert b"cf-used" not in resp.content
+
+
+@pytest.mark.django_db
+class TestInheritedFk:
+    """An FK inherited through multi-table inheritance is one physical column,
+    so it must be one usage row, keyed to the model that declares it."""
+
+    def test_discovered_on_declaring_model_only(self):
+        registry = get_models_with_image_fields(refresh=True)
+        assert registry.get(Content) == ["image"]
+        assert Story not in registry
+
+    def test_child_save_writes_one_row_on_parent(self):
+        story = Story.objects.create(image=make_image("cf-1"))
+        rows = ImageUsage.objects.all()
+        assert [(r.content_type.model_class(), r.object_id) for r in rows] == [
+            (Content, str(story.pk))
+        ]
+
+        story.image = make_image("cf-2")
+        story.save()
+        assert list(ImageUsage.objects.values_list("cloudflare_id", flat=True)) == [
+            "cf-2"
+        ]
+
+    def test_reconcile_keeps_a_single_row(self):
+        Story.objects.create(image=make_image("cf-1"))
+        call_command("reconcile_image_usage", stdout=StringIO())
+        assert ImageUsage.objects.count() == 1
+
+    def test_deleting_child_removes_row(self):
+        story = Story.objects.create(image=make_image("cf-1"))
+        story.delete()
+        assert not ImageUsage.objects.exists()
 
 
 # --- 3. bare-string variants --------------------------------------------------

@@ -45,11 +45,13 @@ def _is_image_reference(field, image_model) -> bool:
     if isinstance(field, CloudflareImageField):
         return True
     # Compare concrete models so an FK to a proxy of CloudflareImage counts
-    # (same table), while a multi-table subclass (its own table) doesn't.
+    # (same table), while a multi-table subclass (its own table) doesn't. A
+    # subclass's own ``<model>_ptr`` parent link is inheritance, not content.
     return bool(
         field.concrete
         and (field.many_to_one or field.one_to_one)
         and field.related_model._meta.concrete_model is image_model
+        and not field.remote_field.parent_link
     )
 
 
@@ -70,12 +72,18 @@ def get_models_with_image_fields(refresh: bool = False) -> dict:
         own_app = CloudflareImage._meta.app_label
         cache: dict = {}
         for model in sorted(django_apps.get_models(), key=lambda m: m._meta.label):
-            if model._meta.app_label == own_app:
+            # Proxies share their concrete model's table and rows; saves through
+            # them are synced via the concrete model (see _tracked_owners).
+            if model._meta.app_label == own_app or model._meta.proxy:
                 continue
+            # Only fields stored in this model's own table. A field inherited
+            # through multi-table inheritance belongs to the parent that
+            # declares it (abstract-base fields are copied, so they count).
             names = sorted(
                 f.name
                 for f in model._meta.get_fields()
                 if _is_image_reference(f, CloudflareImage)
+                and f.model._meta.concrete_model is model
             )
             if names:
                 cache[model] = names
@@ -85,7 +93,29 @@ def get_models_with_image_fields(refresh: bool = False) -> dict:
 
 def get_tracked_field_names(model) -> list:
     """Return the image reference field names on ``model`` (empty if none)."""
-    return get_models_with_image_fields().get(model, [])
+    return get_models_with_image_fields().get(model._meta.concrete_model, [])
+
+
+def _tracked_owners(model) -> list:
+    """``[(owner, field_names), ...]`` whose rows a save of ``model`` must sync.
+
+    That is the concrete model plus each multi-table parent with tracked
+    fields. Django sends ``post_save`` only for the saved class, so a child's
+    save has to sync the fields stored in its parents' tables too.
+    """
+    registry = get_models_with_image_fields()
+    concrete = model._meta.concrete_model
+    chain = [concrete, *concrete._meta.get_parent_list()]
+    return [(m, registry[m]) for m in chain if m in registry]
+
+
+def get_synced_models() -> list:
+    """Every model whose save or delete must touch the usage index."""
+    return [
+        m
+        for m in sorted(django_apps.get_models(), key=lambda m: m._meta.label)
+        if _tracked_owners(m)
+    ]
 
 
 def _extract_cloudflare_id(value) -> str | None:
@@ -247,11 +277,16 @@ def sync_object(instance, using=None, update_fields=None) -> None:
     fields that were actually written are synced; the others may hold unsaved
     in-memory values that don't match the database.
     """
+    for owner, field_names in _tracked_owners(type(instance)):
+        _sync_owner(instance, owner, field_names, using, update_fields)
+
+
+def _sync_owner(instance, owner, field_names, using, update_fields) -> None:
+    """Sync ``owner``'s tracked fields on ``instance``, keyed to ``owner``."""
     from .models import ImageUsage
 
-    field_names = get_tracked_field_names(type(instance))
     if update_fields is not None:
-        opts = type(instance)._meta
+        opts = owner._meta
         field_names = [
             n
             for n in field_names
@@ -259,7 +294,7 @@ def sync_object(instance, using=None, update_fields=None) -> None:
         ]
     if not field_names:
         return
-    content_type = _content_type_for(type(instance), using=using)
+    content_type = _content_type_for(owner, using=using)
     # Manual rows win over auto sync, as in reconcile: a register_usage() row
     # labelled with a field's name (allowed before FKs were tracked) stays put.
     manual = set(

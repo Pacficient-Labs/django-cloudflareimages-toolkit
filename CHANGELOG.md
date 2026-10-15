@@ -36,7 +36,13 @@ Release notes are also published on
   target doesn't exist yet, such as a fixture forward reference, no longer
   aborts the save. Run `reconcile_image_usage` after `loaddata` to index it. A
   `register_usage()` row whose label matches an FK's name, which was allowed
-  before FKs were tracked, is kept and isn't overwritten by the FK (#41).
+  before FKs were tracked, is kept and isn't overwritten by the FK. With
+  multi-table inheritance, a field is tracked once, on the model whose table
+  stores it, and a child's save syncs its parents' fields. This used to
+  register the same column again on every subclass and leave stale rows, which
+  also hit `CloudflareImageField`. A subclass's `<model>_ptr` link to
+  `CloudflareImage` isn't counted as a reference, and deleting through a
+  `CloudflareImage` proxy re-syncs hosts too (#41).
 - **A bare-string `variants` value failed silently.** If a row held one URL as a
   JSON string instead of a list, `get_variant_url` matched neither branch and
   `public_url` came back `None` with no error. Reads now treat a string as a
