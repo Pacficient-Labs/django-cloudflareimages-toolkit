@@ -61,7 +61,9 @@ class Profile(models.Model):
 
 
 def _fallback_image():
-    return CloudflareImage.objects.get(cloudflare_id="cf-fallback")
+    # Django 4.2 calls SET()'s callable on every image delete, even with no
+    # Banner rows, so a missing fallback must not raise.
+    return CloudflareImage.objects.filter(cloudflare_id="cf-fallback").first()
 
 
 class Banner(models.Model):
