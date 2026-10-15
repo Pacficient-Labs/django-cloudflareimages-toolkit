@@ -359,7 +359,8 @@ def register_usage(obj, cloudflare_id: str, field_name: str = MANUAL_FIELD_NAME)
     from .models import ImageUsage
 
     model = type(obj)
-    tracked = get_tracked_field_names(model)
+    # Include fields stored on multi-table parents: a child's save syncs them.
+    tracked = {n for _, names in _tracked_owners(model) for n in names}
     if field_name in tracked:
         raise ValueError(
             f"field_name {field_name!r} collides with the tracked "

@@ -386,6 +386,11 @@ class TestInheritedFk:
         call_command("reconcile_image_usage", stdout=StringIO())
         assert ImageUsage.objects.count() == 1
 
+    def test_register_usage_rejects_inherited_field_name(self):
+        story = Story.objects.create()
+        with pytest.raises(ValueError):
+            register_usage(story, "cf-x", field_name="image")
+
     def test_deleting_child_removes_row(self):
         story = Story.objects.create(image=make_image("cf-1"))
         story.delete()
