@@ -20,6 +20,7 @@ class CloudflareImagesConfig(AppConfig):
         usage-sync signals to those senders only (keeping the receivers off
         untracked models). ``dispatch_uid`` makes the wiring itself idempotent.
         """
+        from django.apps import apps as django_apps
         from django.db.models.signals import post_delete, post_save
 
         from . import signals
@@ -39,17 +40,13 @@ class CloudflareImagesConfig(AppConfig):
                 dispatch_uid=f"cfimg_usage_delete_{label}",
             )
 
-        post_save.connect(
-            signals.link_image_to_usages,
-            sender=CloudflareImage,
-            dispatch_uid="cfimg_link_usages",
-        )
-        # No sender filter: deleting through a CloudflareImage proxy sends
-        # post_delete with the proxy as sender. The receiver checks the model.
-        post_delete.connect(
-            signals.resync_relational_usages,
-            dispatch_uid="cfimg_resync_relational_usages",
-        )
+        # Signals name the class an instance was loaded as, so every proxy of
+        # CloudflareImage needs the same receivers as the concrete model. A
+        # sender-less receiver would cover them too, but Django's delete
+        # collector then skips fast deletes for every model in the project.
+        for model in django_apps.get_models():
+            if model._meta.concrete_model is CloudflareImage:
+                signals.connect_image_receivers(model)
         # Mark the affected image's last_referenced_at whenever any usage row is
         # removed (whatever the deletion path: sync_object, clear_object,
         # unregister_usage, admin, or a raw ORM delete).

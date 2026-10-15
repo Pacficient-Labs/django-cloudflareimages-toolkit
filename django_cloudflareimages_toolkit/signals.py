@@ -77,10 +77,11 @@ def resync_relational_usages(sender, instance, using=None, **kwargs) -> None:
     """
     from django.db.models import Q
 
-    from .models import CloudflareImage, ImageUsage
+    from .models import ImageUsage
     from .registry import _content_type_for, get_models_with_image_fields
 
-    if sender._meta.concrete_model is not CloudflareImage:
+    cloudflare_id = getattr(instance, "_cfimg_deleted_cloudflare_id", None)
+    if not cloudflare_id:
         return
     db = _db(using)
     match = Q()
@@ -93,7 +94,7 @@ def resync_relational_usages(sender, instance, using=None, **kwargs) -> None:
         return
     rows = list(
         ImageUsage.objects.using(db)
-        .filter(match, cloudflare_id=instance.cloudflare_id)
+        .filter(match, cloudflare_id=cloudflare_id)
         .exclude(source=ImageUsage.SOURCE_MANUAL)
         .select_related("content_type")
     )
@@ -108,3 +109,32 @@ def resync_relational_usages(sender, instance, using=None, **kwargs) -> None:
             usage.delete()
         else:
             sync_object(host, using=db)
+
+
+def remember_cloudflare_id(sender, instance, **kwargs) -> None:
+    """pre_delete on CloudflareImage: read ``cloudflare_id`` while the row exists.
+
+    ``resync_relational_usages`` runs in post_delete, when a deferred field
+    (``.only("pk")``) can no longer be loaded.
+    """
+    instance._cfimg_deleted_cloudflare_id = instance.cloudflare_id
+
+
+def connect_image_receivers(model) -> None:
+    """Connect the CloudflareImage receivers for ``model`` (concrete or proxy)."""
+    from django.db.models.signals import post_delete, post_save, pre_delete
+
+    label = model._meta.label
+    post_save.connect(
+        link_image_to_usages, sender=model, dispatch_uid=f"cfimg_link_usages_{label}"
+    )
+    pre_delete.connect(
+        remember_cloudflare_id,
+        sender=model,
+        dispatch_uid=f"cfimg_remember_id_{label}",
+    )
+    post_delete.connect(
+        resync_relational_usages,
+        sender=model,
+        dispatch_uid=f"cfimg_resync_usages_{label}",
+    )

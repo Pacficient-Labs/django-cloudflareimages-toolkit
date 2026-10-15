@@ -21,7 +21,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.core.management import call_command
 from django.db import connection, models
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, pre_delete
 from django.test import Client
 from django.test.utils import isolate_apps
 from django.urls import reverse
@@ -230,18 +230,39 @@ class TestRelationalSync:
 
     @isolate_apps("tests")
     def test_delete_through_proxy_resyncs_hosts(self):
+        from django_cloudflareimages_toolkit.signals import connect_image_receivers
+
         class ImageProxy(CloudflareImage):
             class Meta:
                 proxy = True
                 app_label = "tests"
 
+        # apps.ready() does this for every proxy in the app registry.
+        connect_image_receivers(ImageProxy)
         image = make_image("cf-1")
         post = Post.objects.create(image=image)
-        # What the collector leaves behind for SET_NULL: column rewritten, no
-        # post_save. Then post_delete fires with the proxy as sender.
+        proxied = ImageProxy.objects.get(pk=image.pk)
+        # What the collector does for SET_NULL around a proxy delete: signals
+        # name the proxy, the column is rewritten without post_save.
+        pre_delete.send(sender=ImageProxy, instance=proxied, using="default")
         Post.objects.filter(pk=post.pk).update(image=None)
-        post_delete.send(sender=ImageProxy, instance=image, using="default")
+        post_delete.send(sender=ImageProxy, instance=proxied, using="default")
         assert not usages_for(post).exists()
+
+    def test_delete_with_deferred_cloudflare_id(self):
+        image = make_image("cf-1")
+        post = Post.objects.create(image=image)
+        CloudflareImage.objects.only("pk").get(pk=image.pk).delete()
+        assert not CloudflareImage.objects.exists()
+        assert not usages_for(post).exists()
+
+    def test_unrelated_models_keep_fast_delete(self):
+        # A sender-less delete receiver would make Django's collector skip
+        # fast deletes and field deferral for every model in the project.
+        from .models import Plain
+
+        assert not pre_delete.has_listeners(Plain)
+        assert not post_delete.has_listeners(Plain)
 
     def test_set_callable_delete_repoints_usage(self):
         fallback = make_image("cf-fallback")
