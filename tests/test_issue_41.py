@@ -209,6 +209,15 @@ class TestRelationalSync:
             str(product.pk)
         ]
 
+    def test_update_fields_without_fk_keeps_saved_reference(self):
+        post = Post.objects.create(image=make_image("cf-1"))
+        post.image = make_image("cf-2")
+        post.save(update_fields=["title"])  # the FK column isn't written
+        assert usages_for(post).get().cloudflare_id == "cf-1"
+
+        post.save(update_fields=["image_id"])
+        assert usages_for(post).get().cloudflare_id == "cf-2"
+
     def test_set_callable_delete_repoints_usage(self):
         fallback = make_image("cf-fallback")
         banner = Banner.objects.create(image=make_image("cf-1"))

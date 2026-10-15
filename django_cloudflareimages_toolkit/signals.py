@@ -12,13 +12,15 @@ from __future__ import annotations
 from .registry import _db, clear_object, sync_object
 
 
-def sync_instance_usage(sender, instance, using=None, **kwargs) -> None:
+def sync_instance_usage(
+    sender, instance, using=None, update_fields=None, **kwargs
+) -> None:
     """post_save: upsert/clear usage rows for a saved host instance.
 
     Django passes the database alias as ``using``; we forward it so multi-DB
     deployments record the usage on the same database as the host instance.
     """
-    sync_object(instance, using=using)
+    sync_object(instance, using=using, update_fields=update_fields)
 
 
 def remove_instance_usage(sender, instance, using=None, **kwargs) -> None:

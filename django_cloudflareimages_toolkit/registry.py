@@ -240,11 +240,23 @@ def clear_usage(content_type, object_id, field_name: str, using=None) -> None:
     ).delete()
 
 
-def sync_object(instance, using=None) -> None:
-    """Synchronise usage rows for every tracked field on a single instance."""
+def sync_object(instance, using=None, update_fields=None) -> None:
+    """Synchronise usage rows for every tracked field on a single instance.
+
+    With ``update_fields`` (from ``save(update_fields=...)``), only tracked
+    fields that were actually written are synced; the others may hold unsaved
+    in-memory values that don't match the database.
+    """
     from .models import ImageUsage
 
     field_names = get_tracked_field_names(type(instance))
+    if update_fields is not None:
+        opts = type(instance)._meta
+        field_names = [
+            n
+            for n in field_names
+            if n in update_fields or opts.get_field(n).attname in update_fields
+        ]
     if not field_names:
         return
     content_type = _content_type_for(type(instance), using=using)
