@@ -15,6 +15,7 @@ import uuid
 from django.db import models
 
 from django_cloudflareimages_toolkit.fields import CloudflareImageField
+from django_cloudflareimages_toolkit.models import CloudflareImage
 
 
 class Product(models.Model):
@@ -56,4 +57,16 @@ class Profile(models.Model):
 
     avatar = models.OneToOneField(
         "django_cloudflareimages_toolkit.CloudflareImage", on_delete=models.CASCADE
+    )
+
+
+def _fallback_image():
+    return CloudflareImage.objects.get(cloudflare_id="cf-fallback")
+
+
+class Banner(models.Model):
+    """Host whose FK is re-pointed by ``on_delete=SET(...)`` (#41 review)."""
+
+    image = models.ForeignKey(
+        CloudflareImage, on_delete=models.SET(_fallback_image), null=True
     )

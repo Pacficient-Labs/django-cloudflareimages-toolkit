@@ -10,6 +10,8 @@ Regression tests for issue #41.
 """
 
 import importlib
+import json
+import uuid
 from datetime import timedelta
 from io import StringIO
 
@@ -18,8 +20,9 @@ from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.core.management import call_command
-from django.db import connection
+from django.db import connection, models
 from django.test import Client
+from django.test.utils import isolate_apps
 from django.urls import reverse
 from django.utils import timezone
 
@@ -30,11 +33,13 @@ from django_cloudflareimages_toolkit.models import (
     ImageUsage,
 )
 from django_cloudflareimages_toolkit.registry import (
+    _is_image_reference,
     get_models_with_image_fields,
+    record_usage,
     register_usage,
 )
 
-from .models import Post, Product, Profile
+from .models import Banner, Post, Product, Profile
 
 DELIVERY = "https://imagedelivery.net/test-account-hash"
 CHANGELIST = "admin:django_cloudflareimages_toolkit_cloudflareimage_changelist"
@@ -126,6 +131,22 @@ class TestRelationalDiscovery:
         assert registry.get(Post) == ["image"]
         assert registry.get(Profile) == ["avatar"]
 
+    @isolate_apps("tests")
+    def test_fk_to_a_proxy_model_counts_as_a_reference(self):
+        class ImageProxy(CloudflareImage):
+            class Meta:
+                proxy = True
+                app_label = "tests"
+
+        class Gallery(models.Model):
+            cover = models.ForeignKey(ImageProxy, on_delete=models.CASCADE)
+
+            class Meta:
+                app_label = "tests"
+
+        field = Gallery._meta.get_field("cover")
+        assert _is_image_reference(field, CloudflareImage)
+
     def test_skips_toolkit_bookkeeping_models(self):
         registry = get_models_with_image_fields(refresh=True)
         assert ImageUsage not in registry
@@ -187,6 +208,56 @@ class TestRelationalSync:
         assert list(ImageUsage.objects.values_list("object_id", flat=True)) == [
             str(product.pk)
         ]
+
+    def test_set_callable_delete_repoints_usage(self):
+        fallback = make_image("cf-fallback")
+        banner = Banner.objects.create(image=make_image("cf-1"))
+        CloudflareImage.objects.get(cloudflare_id="cf-1").delete()
+        banner.refresh_from_db()
+        assert banner.image == fallback
+        usage = usages_for(banner).get()
+        assert (usage.cloudflare_id, usage.image) == ("cf-fallback", fallback)
+
+    def test_save_keeps_manual_row_colliding_with_fk_name(self):
+        # A pre-upgrade workaround: a manual row labelled with the FK's name.
+        post = Post.objects.create()
+        ct = ContentType.objects.get_for_model(Post)
+        record_usage(ct, post.pk, "image", "cf-manual", source=ImageUsage.SOURCE_MANUAL)
+
+        post.save()  # FK is null
+        post.image = make_image("cf-1")
+        post.save()
+
+        usage = usages_for(post).get()
+        assert (usage.cloudflare_id, usage.source) == (
+            "cf-manual",
+            ImageUsage.SOURCE_MANUAL,
+        )
+
+    def test_loaddata_with_forward_fk_reference(self, tmp_path):
+        image_pk = str(uuid.uuid4())
+        fixture = tmp_path / "fx.json"
+        fixture.write_text(
+            json.dumps(
+                [
+                    {"model": "tests.post", "pk": 1, "fields": {"image": image_pk}},
+                    {
+                        "model": "django_cloudflareimages_toolkit.cloudflareimage",
+                        "pk": image_pk,
+                        "fields": {
+                            "cloudflare_id": "cf-fx",
+                            "upload_url": "https://upload.example/cf-fx",
+                            "expires_at": "2030-01-01T00:00:00Z",
+                            "created_at": "2030-01-01T00:00:00Z",
+                            "updated_at": "2030-01-01T00:00:00Z",
+                        },
+                    },
+                ]
+            )
+        )
+        call_command("loaddata", str(fixture), verbosity=0)
+        call_command("reconcile_image_usage", stdout=StringIO())
+        assert usages_for(Post.objects.get(pk=1)).get().cloudflare_id == "cf-fx"
 
     def test_register_usage_rejects_fk_field_name(self):
         post = Post.objects.create()

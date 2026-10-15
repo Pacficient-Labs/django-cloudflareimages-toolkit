@@ -28,9 +28,15 @@ Release notes are also published on
   `CloudflareImage` on installed models (the toolkit's own `ImageUsage` and
   `ImageUploadLog` are skipped). Those fields get the same save/delete signals,
   and `reconcile_image_usage` backfills them, so existing rows are fixed by one
-  reconcile run. Deleting an image now also drops usage rows held by FKs, since
-  `SET_NULL` rewrites the host column without firing `post_save` and the stale
-  row would otherwise relink to any later image uploaded under the same id (#41).
+  reconcile run. Deleting an image now re-syncs the hosts whose FK pointed at
+  it, since `SET_NULL`, `SET_DEFAULT` and `SET()` rewrite the host column
+  without firing `post_save`. Without that, the stale row would relink to any
+  later image uploaded under the same id, and an image assigned by `SET()` would
+  look orphaned. FKs to a proxy of `CloudflareImage` count too. A host whose FK
+  target doesn't exist yet, such as a fixture forward reference, no longer
+  aborts the save. Run `reconcile_image_usage` after `loaddata` to index it. A
+  `register_usage()` row whose label matches an FK's name, which was allowed
+  before FKs were tracked, is kept and isn't overwritten by the FK (#41).
 - **A bare-string `variants` value failed silently.** If a row held one URL as a
   JSON string instead of a list, `get_variant_url` matched neither branch and
   `public_url` came back `None` with no error. Reads now treat a string as a

@@ -63,32 +63,44 @@ def link_image_to_usages(sender, instance, using=None, **kwargs) -> None:
         _bump_last_referenced(instance, using=using)
 
 
-def drop_relational_usages(sender, instance, using=None, **kwargs) -> None:
-    """post_delete on CloudflareImage: drop usage rows held by FK/OneToOne fields.
+def resync_relational_usages(sender, instance, using=None, **kwargs) -> None:
+    """post_delete on CloudflareImage: re-sync hosts whose FK pointed at it.
 
-    An FK can't keep pointing at a deleted row: ``CASCADE`` deletes the host
-    (its own post_delete clears the rows), but ``SET_NULL``/``SET_DEFAULT``/
-    ``SET()`` rewrite the host column without ``post_save``. Without this the
-    stale row would linger as an "unregistered reference" and relink to any
-    image later registered under the same ``cloudflare_id``.
+    ``CASCADE`` deletes the host (its own post_delete clears the rows), but
+    ``SET_NULL``/``SET_DEFAULT``/``SET()``/``DO_NOTHING`` leave the host in
+    place with a column rewritten without ``post_save``. Re-syncing each host
+    from the database drops the row for the deleted image (which would
+    otherwise relink to any later image under the same ``cloudflare_id``) and
+    records the replacement image a ``SET``/``SET_DEFAULT`` handler assigned.
     """
-    from django.contrib.contenttypes.models import ContentType
     from django.db.models import Q
 
-    from .models import CloudflareImage, ImageUsage
-    from .registry import get_models_with_image_fields
+    from .models import ImageUsage
+    from .registry import _content_type_for, get_models_with_image_fields
 
+    db = _db(using)
     match = Q()
     for model, names in get_models_with_image_fields().items():
-        fk_names = [
-            n
-            for n in names
-            if model._meta.get_field(n).related_model is CloudflareImage
-        ]
+        fk_names = [n for n in names if model._meta.get_field(n).is_relation]
         if fk_names:
-            ct = ContentType.objects.db_manager(_db(using)).get_for_model(model)
+            ct = _content_type_for(model, using=db)
             match |= Q(content_type=ct, field_name__in=fk_names)
-    if match:
-        ImageUsage.objects.using(_db(using)).filter(
-            match, cloudflare_id=instance.cloudflare_id
-        ).exclude(source=ImageUsage.SOURCE_MANUAL).delete()
+    if not match:
+        return
+    rows = list(
+        ImageUsage.objects.using(db)
+        .filter(match, cloudflare_id=instance.cloudflare_id)
+        .exclude(source=ImageUsage.SOURCE_MANUAL)
+        .select_related("content_type")
+    )
+    for usage in rows:
+        model = usage.content_type.model_class()
+        host = (
+            model._base_manager.using(db).filter(pk=usage.object_id).first()
+            if model
+            else None
+        )
+        if host is None:
+            usage.delete()
+        else:
+            sync_object(host, using=db)

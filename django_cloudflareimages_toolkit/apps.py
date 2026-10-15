@@ -45,9 +45,9 @@ class CloudflareImagesConfig(AppConfig):
             dispatch_uid="cfimg_link_usages",
         )
         post_delete.connect(
-            signals.drop_relational_usages,
+            signals.resync_relational_usages,
             sender=CloudflareImage,
-            dispatch_uid="cfimg_drop_relational_usages",
+            dispatch_uid="cfimg_resync_relational_usages",
         )
         # Mark the affected image's last_referenced_at whenever any usage row is
         # removed (whatever the deletion path: sync_object, clear_object,

@@ -44,10 +44,12 @@ def _is_image_reference(field, image_model) -> bool:
 
     if isinstance(field, CloudflareImageField):
         return True
+    # Compare concrete models so an FK to a proxy of CloudflareImage counts
+    # (same table), while a multi-table subclass (its own table) doesn't.
     return bool(
         field.concrete
         and (field.many_to_one or field.one_to_one)
-        and field.related_model is image_model
+        and field.related_model._meta.concrete_model is image_model
     )
 
 
@@ -100,6 +102,21 @@ def _extract_cloudflare_id(value) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+def _read_cloudflare_id(instance, field_name) -> str | None:
+    """Read the cloudflare_id a tracked field on ``instance`` points at.
+
+    An FK whose target row doesn't exist (a fixture forward reference while
+    constraints are off, or ``on_delete=DO_NOTHING``) raises ``DoesNotExist``
+    from the descriptor; treat it as no reference so the save isn't aborted.
+    """
+    from django.core.exceptions import ObjectDoesNotExist
+
+    try:
+        return _extract_cloudflare_id(getattr(instance, field_name, None))
+    except ObjectDoesNotExist:
+        return None
 
 
 def _db(using):
@@ -225,12 +242,28 @@ def clear_usage(content_type, object_id, field_name: str, using=None) -> None:
 
 def sync_object(instance, using=None) -> None:
     """Synchronise usage rows for every tracked field on a single instance."""
+    from .models import ImageUsage
+
     field_names = get_tracked_field_names(type(instance))
     if not field_names:
         return
     content_type = _content_type_for(type(instance), using=using)
+    # Manual rows win over auto sync, as in reconcile: a register_usage() row
+    # labelled with a field's name (allowed before FKs were tracked) stays put.
+    manual = set(
+        ImageUsage.objects.using(_db(using))
+        .filter(
+            content_type=content_type,
+            object_id=str(instance.pk),
+            field_name__in=field_names,
+            source=ImageUsage.SOURCE_MANUAL,
+        )
+        .values_list("field_name", flat=True)
+    )
     for field_name in field_names:
-        cloudflare_id = _extract_cloudflare_id(getattr(instance, field_name, None))
+        if field_name in manual:
+            continue
+        cloudflare_id = _read_cloudflare_id(instance, field_name)
         if cloudflare_id:
             record_usage(
                 content_type, instance.pk, field_name, cloudflare_id, using=using

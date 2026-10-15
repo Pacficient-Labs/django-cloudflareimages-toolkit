@@ -17,7 +17,7 @@ from django.db import transaction
 from ...models import CloudflareImage, ImageUsage
 from ...registry import (
     MANUAL_FIELD_NAME,
-    _extract_cloudflare_id,
+    _read_cloudflare_id,
     get_models_with_image_fields,
     record_usage,
 )
@@ -65,9 +65,7 @@ class Command(BaseCommand):
             for field_name in registry[model]:
                 current = {}
                 for instance in instances:
-                    cloudflare_id = _extract_cloudflare_id(
-                        getattr(instance, field_name, None)
-                    )
+                    cloudflare_id = _read_cloudflare_id(instance, field_name)
                     if cloudflare_id:
                         current[str(instance.pk)] = cloudflare_id
 
