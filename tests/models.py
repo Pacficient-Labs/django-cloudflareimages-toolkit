@@ -52,6 +52,18 @@ class Post(models.Model):
     )
 
 
+class PostEvent(models.Model):
+    """A snapshot with a copy of the live Post.image foreign key."""
+
+    image = models.ForeignKey(
+        CloudflareImage,
+        on_delete=models.DO_NOTHING,
+        db_constraint=False,
+        related_name="+",
+        null=True,
+    )
+
+
 class Profile(models.Model):
     """Host referencing an image via a cascading OneToOneField (#41)."""
 

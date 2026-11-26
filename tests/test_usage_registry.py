@@ -22,7 +22,7 @@ from django_cloudflareimages_toolkit.registry import (
     unregister_usage,
 )
 
-from .models import Article, Plain, Product
+from .models import Article, Plain, Post, PostEvent, Product
 
 BASE = "https://api.cloudflare.com/client/v4"
 ACCOUNT = "test-account-id"
@@ -59,6 +59,75 @@ class TestRegistryDiscovery:
         # Multiple fields are returned in a stable, sorted order.
         assert registry.get(Article) == ["cover", "thumbnail"]
         assert Plain not in registry
+
+
+@pytest.fixture
+def usage_exclusion(settings, monkeypatch):
+    from django_cloudflareimages_toolkit import registry
+
+    monkeypatch.setattr(registry, "_field_cache", None)
+
+    def configure(value):
+        settings.CLOUDFLARE_IMAGES = {
+            **settings.CLOUDFLARE_IMAGES,
+            "USAGE_EXCLUDE_MODELS": value,
+        }
+        return get_models_with_image_fields(refresh=True)
+
+    return configure
+
+
+def test_usage_exclusion_accepts_model_labels(usage_exclusion):
+    registry = usage_exclusion(["tests.PostEvent"])
+    assert PostEvent not in registry
+    assert registry[Post] == ["image"]
+
+
+def test_usage_exclusion_predicate_can_select_a_field(usage_exclusion):
+    registry = usage_exclusion(
+        lambda model, field: model is Article and field.name == "thumbnail"
+    )
+    assert registry[Article] == ["cover"]
+    assert registry[PostEvent] == ["image"]
+
+
+@pytest.mark.django_db
+def test_reconcile_prunes_excluded_snapshot_but_keeps_manual_usage(usage_exclusion):
+    live = make_image("cf-live")
+    snapshot = make_image("cf-snapshot")
+    manual = make_image("cf-manual-snapshot")
+    post = Post.objects.create(image=live)
+    event = PostEvent.objects.create(image=snapshot)
+    call_command("reconcile_image_usage")
+    automatic = usages_for(event).get()
+    assert automatic.source == ImageUsage.SOURCE_AUTO
+    register_usage(event, manual.cloudflare_id, field_name="intentional")
+    old = timezone.now() - timedelta(days=30)
+    CloudflareImage.objects.filter(pk=snapshot.pk).update(last_referenced_at=old)
+
+    usage_exclusion(["tests.PostEvent"])
+    event.save()
+    assert usages_for(event).filter(pk=automatic.pk).exists()
+    assert "remove 1 stale row(s)" in _call_with_output(
+        "reconcile_image_usage", "--dry-run"
+    )
+    assert usages_for(event).filter(pk=automatic.pk).exists()
+    snapshot.refresh_from_db()
+    assert snapshot.last_referenced_at == old
+
+    call_command("reconcile_image_usage")
+    assert usages_for(post).get().image_id == live.pk
+    manual_usage = usages_for(event).get()
+    assert manual_usage.source == ImageUsage.SOURCE_MANUAL
+    assert manual_usage.image_id == manual.pk
+    snapshot.refresh_from_db()
+    assert snapshot.last_referenced_at > old
+    assert not snapshot.usages.exists()
+
+    another_event = PostEvent.objects.create(image=snapshot)
+    assert not usages_for(another_event).exists()
+    assert "remove 0 stale row(s)" in _call_with_output("reconcile_image_usage")
+    assert not snapshot.usages.exists()
 
 
 @pytest.mark.django_db

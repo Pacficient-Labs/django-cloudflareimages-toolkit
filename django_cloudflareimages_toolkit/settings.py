@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.utils.module_loading import import_string
 
 
@@ -171,6 +172,21 @@ class CloudflareImagesSettings:
                 "CLOUDFLARE_IMAGES['METADATA_FACTORY'] must resolve to a callable"
             )
         return factory
+
+    def get_usage_exclusion(self) -> Callable[..., bool]:
+        """Resolve the optional model labels or (model, field) predicate."""
+        value = self._settings.get("USAGE_EXCLUDE_MODELS", ())
+        if callable(value):
+            return value
+        if not isinstance(value, (list, tuple, set, frozenset)) or not all(
+            isinstance(label, str) for label in value
+        ):
+            raise ImproperlyConfigured(
+                "CLOUDFLARE_IMAGES['USAGE_EXCLUDE_MODELS'] must be a collection "
+                "of model labels or a callable taking (model, field)"
+            )
+        labels = frozenset(label.lower() for label in value)
+        return lambda model, field: model._meta.label_lower in labels
 
     @property
     def webhook_secret(self) -> str | None:
