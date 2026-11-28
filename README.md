@@ -662,6 +662,27 @@ class Post(models.Model):
 
 Many-to-many fields aren't discovered. Use the manual API below for those.
 
+**Exclude audit snapshots.** By default, discovery does not distinguish live
+content from history models. To exclude models from automatic tracking, set
+`CLOUDFLARE_IMAGES["USAGE_EXCLUDE_MODELS"]` to model labels such as
+`["blog.PostEvent"]`, or to a callable taking `(model, field)` and returning
+`True` for fields to exclude. For example, a project using django-pghistory
+could opt out its generated mirrors by supplying this predicate in its settings:
+
+```python
+def exclude_history_reference(model, field):
+    return any(f.name.startswith("pgh_") for f in model._meta.fields)
+
+CLOUDFLARE_IMAGES["USAGE_EXCLUDE_MODELS"] = exclude_history_reference
+```
+
+Choose exclusions only for references that should not protect images from
+orphan cleanup. After changing the setting, restart the application, review
+`python manage.py reconcile_image_usage --dry-run`, then reconcile to remove
+obsolete automatic usage rows. This removes index rows, not image files, and
+preserves explicitly registered references whose owners still exist. Removing
+a linked usage restarts the image's orphan grace period.
+
 **Manual API.** For references the toolkit can't see (an ID kept in a JSON blob,
 derived at runtime, etc.):
 

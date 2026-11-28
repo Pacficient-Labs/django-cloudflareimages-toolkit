@@ -60,15 +60,17 @@ def get_models_with_image_fields(refresh: bool = False) -> dict:
 
     Covers ``CloudflareImageField``s and plain ``ForeignKey``/``OneToOneField``s
     to ``CloudflareImage`` (the toolkit's own models are skipped: their FKs are
-    bookkeeping, not content). This is the single source of truth for where images
-    can live, derived from the model definitions themselves so it never drifts
-    from the code. Results are cached; pass ``refresh=True`` to rebuild (useful in
+    bookkeeping, not content). Projects can opt out individual models or fields
+    via ``USAGE_EXCLUDE_MODELS``. The registry drives both signal sync and
+    reconciliation. Results are cached; pass ``refresh=True`` to rebuild (useful in
     tests that declare models after the app registry is first inspected).
     """
     global _field_cache
     if _field_cache is None or refresh:
         from .models import CloudflareImage
+        from .settings import cloudflare_settings
 
+        excluded = cloudflare_settings.get_usage_exclusion()
         own_app = CloudflareImage._meta.app_label
         cache: dict = {}
         for model in sorted(django_apps.get_models(), key=lambda m: m._meta.label):
@@ -84,6 +86,7 @@ def get_models_with_image_fields(refresh: bool = False) -> dict:
                 for f in model._meta.get_fields()
                 if _is_image_reference(f, CloudflareImage)
                 and f.model._meta.concrete_model is model
+                and not excluded(model, f)
             )
             if names:
                 cache[model] = names
