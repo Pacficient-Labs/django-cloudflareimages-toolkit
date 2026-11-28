@@ -9,6 +9,14 @@ Release notes are also published on
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-28
+
+### Added
+
+- `CLOUDFLARE_IMAGES["USAGE_EXCLUDE_MODELS"]` can exclude audit or history models from automatic image usage discovery by model label or predicate. Reconciliation clears stale automatic references for excluded models while preserving manual registrations (#44).
+
+## [1.1.6] - 2026-10-15
+
 ### Fixed
 
 - **The admin never showed a preview.** `CloudflareImage.thumbnail_url` only
